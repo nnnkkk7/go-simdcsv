@@ -186,7 +186,7 @@ func TestGenerateMasks(t *testing.T) {
 		},
 		{
 			name:         "full_64_byte_csv",
-			input:        []byte("aaaa,bbbb,cccc,dddd\neeee,ffff,gggg,hhhh\niiii,jjjj,kkkk,llll\nmm"),
+			input:        []byte("aaaa,bbbb,cccc,dddd\neeee,ffff,gggg,hhhh\niiii,jjjj,kkkk,llll\nmmmm"),
 			separator:    ',',
 			wantQuotePos: nil,
 			wantSepPos:   []int{4, 9, 14, 24, 29, 34, 44, 49, 54},
@@ -299,28 +299,31 @@ func TestGenerateMasksPadded(t *testing.T) {
 			wantValidBits: 1,
 		},
 		{
+			// 31 bytes: 16 letters + 15 commas = 31
 			name:          "31_bytes",
-			input:         []byte("a,b,c,d,e,f,g,h,i,j,k,l,m,n,o"),
-			separator:     ',',
-			wantQuotePos:  nil,
-			wantSepPos:    []int{1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27},
-			wantCRPos:     nil,
-			wantNLPos:     nil,
-			wantValidBits: 31,
-		},
-		{
-			name:          "32_bytes_exact_half",
 			input:         []byte("a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p"),
 			separator:     ',',
 			wantQuotePos:  nil,
 			wantSepPos:    []int{1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29},
 			wantCRPos:     nil,
 			wantNLPos:     nil,
+			wantValidBits: 31,
+		},
+		{
+			// 32 bytes: 16 letters + 16 commas = 32
+			name:          "32_bytes_exact_half",
+			input:         []byte("a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,"),
+			separator:     ',',
+			wantQuotePos:  nil,
+			wantSepPos:    []int{1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31},
+			wantCRPos:     nil,
+			wantNLPos:     nil,
 			wantValidBits: 32,
 		},
 		{
+			// 33 bytes: 17 letters + 16 commas = 33
 			name:          "33_bytes_just_over_half",
-			input:         []byte("a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,"),
+			input:         []byte("a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q"),
 			separator:     ',',
 			wantQuotePos:  nil,
 			wantSepPos:    []int{1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31},
@@ -329,11 +332,12 @@ func TestGenerateMasksPadded(t *testing.T) {
 			wantValidBits: 33,
 		},
 		{
+			// 63 bytes: 32 letters + 31 commas = 63
 			name:          "63_bytes_one_short",
-			input:         []byte("a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E"),
+			input:         []byte("a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F"),
 			separator:     ',',
 			wantQuotePos:  nil,
-			wantSepPos:    []int{1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 33, 35, 37, 39, 41, 43, 45, 47, 49, 51, 53, 55, 57, 59},
+			wantSepPos:    []int{1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 33, 35, 37, 39, 41, 43, 45, 47, 49, 51, 53, 55, 57, 59, 61},
 			wantCRPos:     nil,
 			wantNLPos:     nil,
 			wantValidBits: 63,

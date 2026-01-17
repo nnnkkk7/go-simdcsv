@@ -17,8 +17,8 @@ func TestParseBuffer(t *testing.T) {
 		buf := []byte("a,b,c\n")
 
 		sr := &scanResult{
-			quoteMasks:     []uint64{0}, // no quotes
-			separatorMasks: []uint64{0b000110}, // bits 1 and 3 set (commas)
+			quoteMasks:     []uint64{0},        // no quotes
+			separatorMasks: []uint64{0b001010}, // bits 1 and 3 set (commas at pos 1, 3)
 			newlineMasks:   []uint64{0b100000}, // bit 5 set (newline)
 			chunkCount:     1,
 			lastChunkBits:  6,
@@ -137,11 +137,12 @@ func TestParseBuffer(t *testing.T) {
 func TestFieldExtraction(t *testing.T) {
 	t.Run("SimpleFields", func(t *testing.T) {
 		// Input: "a,b,c\n"
+		// Positions: 0=a, 1=comma, 2=b, 3=comma, 4=c, 5=newline
 		buf := []byte("a,b,c\n")
 
 		sr := &scanResult{
 			quoteMasks:     []uint64{0},
-			separatorMasks: []uint64{0b000110}, // commas at positions 1, 3
+			separatorMasks: []uint64{0b001010}, // commas at positions 1, 3
 			newlineMasks:   []uint64{0b100000}, // newline at position 5
 			chunkCount:     1,
 			lastChunkBits:  6,
@@ -169,7 +170,7 @@ func TestFieldExtraction(t *testing.T) {
 		buf := []byte("\"a\",\"b\",\"c\"\n")
 
 		sr := &scanResult{
-			quoteMasks:     []uint64{0b10010010101}, // quotes at 0,2,4,6,8,10
+			quoteMasks:     []uint64{0b010101010101}, // quotes at 0,2,4,6,8,10
 			separatorMasks: []uint64{0b000010001000}, // commas at 3,7
 			newlineMasks:   []uint64{0b100000000000}, // newline at 11
 			chunkCount:     1,
@@ -201,7 +202,7 @@ func TestFieldExtraction(t *testing.T) {
 
 		sr := &scanResult{
 			quoteMasks:     []uint64{0b00010100}, // quotes at 2,4
-			separatorMasks: []uint64{0b01000010}, // commas at 1,5
+			separatorMasks: []uint64{0b00100010}, // commas at 1,5
 			newlineMasks:   []uint64{0b10000000}, // newline at 7
 			chunkCount:     1,
 			lastChunkBits:  8,
@@ -255,11 +256,12 @@ func TestFieldExtraction(t *testing.T) {
 	t.Run("EmptyQuotedField", func(t *testing.T) {
 		// Input: "a,\"\",c\n"
 		// Empty quoted field in the middle
+		// Positions: 0=a 1=, 2=" 3=" 4=, 5=c 6=\n
 		buf := []byte("a,\"\",c\n")
 
 		sr := &scanResult{
-			quoteMasks:     []uint64{0b001100}, // quotes at 2,3
-			separatorMasks: []uint64{0b100010}, // commas at 1,5
+			quoteMasks:     []uint64{0b001100},  // quotes at 2,3
+			separatorMasks: []uint64{0b010010},  // commas at 1,4
 			newlineMasks:   []uint64{0b1000000}, // newline at 6
 			chunkCount:     1,
 			lastChunkBits:  7,
@@ -338,11 +340,12 @@ func TestRowsInitialization(t *testing.T) {
 	t.Run("FirstFieldIndex", func(t *testing.T) {
 		// Input: "a,b\nc,d\ne,f\n"
 		// Three rows, 2 fields each
+		// Positions: 0=a 1=, 2=b 3=\n 4=c 5=, 6=d 7=\n 8=e 9=, 10=f 11=\n
 		buf := []byte("a,b\nc,d\ne,f\n")
 
 		sr := &scanResult{
 			quoteMasks:     []uint64{0},
-			separatorMasks: []uint64{0b000100010010}, // commas at 1,5,9
+			separatorMasks: []uint64{0b001000100010}, // commas at 1,5,9
 			newlineMasks:   []uint64{0b100010001000}, // newlines at 3,7,11
 			chunkCount:     1,
 			lastChunkBits:  12,
@@ -372,13 +375,11 @@ func TestRowsInitialization(t *testing.T) {
 		buf := []byte("a,b,c\nd,e\nf,g,h,i\n")
 
 		// Build masks for this input
-		// Row 1: a,b,c\n (positions 0-5)
-		// Row 2: d,e\n (positions 6-9)
-		// Row 3: f,g,h,i\n (positions 10-17)
+		// Positions: 0=a 1=, 2=b 3=, 4=c 5=\n 6=d 7=, 8=e 9=\n 10=f 11=, 12=g 13=, 14=h 15=, 16=i 17=\n
 		sr := &scanResult{
 			quoteMasks:     []uint64{0},
-			separatorMasks: []uint64{0b0010101010000110}, // commas
-			newlineMasks:   []uint64{0b0100000010100000}, // newlines at 5, 9, 17
+			separatorMasks: []uint64{0b1010100010001010}, // commas at 1,3,7,11,13,15
+			newlineMasks:   []uint64{0b100000001000100000}, // newlines at 5, 9, 17
 			chunkCount:     1,
 			lastChunkBits:  18,
 		}
@@ -400,12 +401,13 @@ func TestRowsInitialization(t *testing.T) {
 
 	t.Run("LineNumTracking", func(t *testing.T) {
 		// Verify line numbers are tracked correctly
+		// Positions: 0-3=row1 4=\n 5-8=row2 9=\n 10-13=row3 14=\n
 		buf := []byte("row1\nrow2\nrow3\n")
 
 		sr := &scanResult{
 			quoteMasks:     []uint64{0},
 			separatorMasks: []uint64{0},
-			newlineMasks:   []uint64{0b0100000100010000}, // newlines at 4, 9, 14
+			newlineMasks:   []uint64{0b100000100010000}, // newlines at 4, 9, 14
 			chunkCount:     1,
 			lastChunkBits:  15,
 		}
@@ -753,15 +755,17 @@ func TestDoubleQuoteUnescape(t *testing.T) {
 
 	t.Run("UnescapeWithExtraction", func(t *testing.T) {
 		// Full test: extract field with double quotes and unescape
+		// Input: "a""b"\n (7 bytes)
+		// Positions: 0=" 1=a 2=" 3=" 4=b 5=" 6=\n
 		buf := []byte("\"a\"\"b\"\n")
 
 		sr := &scanResult{
-			quoteMasks:     []uint64{(1 << 0) | (1 << 4)}, // outer quotes (inner "" removed by Scan)
+			quoteMasks:     []uint64{(1 << 0) | (1 << 5)}, // outer quotes at 0 and 5 (inner "" at 2,3 removed by Scan)
 			separatorMasks: []uint64{0},
-			newlineMasks:   []uint64{1 << 5},
+			newlineMasks:   []uint64{1 << 6},
 			postProcChunks: []int{0},
 			chunkCount:     1,
-			lastChunkBits:  6,
+			lastChunkBits:  7,
 		}
 
 		result := parseBuffer(buf, sr)
@@ -905,7 +909,7 @@ func TestEdgeCases(t *testing.T) {
 	})
 
 	t.Run("OnlyNewlines", func(t *testing.T) {
-		// Multiple empty rows
+		// Multiple blank lines - should be skipped (matching encoding/csv behavior)
 		buf := []byte("\n\n\n")
 
 		sr := &scanResult{
@@ -918,15 +922,9 @@ func TestEdgeCases(t *testing.T) {
 
 		result := parseBuffer(buf, sr)
 
-		// Each newline creates a row with one empty field
-		if len(result.rows) != 3 {
-			t.Errorf("expected 3 rows, got %d", len(result.rows))
-		}
-
-		for i, row := range result.rows {
-			if row.fieldCount != 1 {
-				t.Errorf("row %d: expected 1 field (empty), got %d", i, row.fieldCount)
-			}
+		// Blank lines are skipped (matching encoding/csv behavior)
+		if len(result.rows) != 0 {
+			t.Errorf("expected 0 rows (blank lines skipped), got %d", len(result.rows))
 		}
 	})
 
