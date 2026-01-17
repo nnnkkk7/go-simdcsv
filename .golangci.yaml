@@ -155,11 +155,6 @@ run:
   build-tags: []
 
 output:
-  # Format for output
-  formats:
-    colored-line-number:
-      path: stdout
-
   # Sort results before output
   sort-results: true
 
