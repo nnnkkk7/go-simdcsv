@@ -1,0 +1,35 @@
+services:
+  test:
+    build: .
+    platform: linux/amd64
+    volumes:
+      - .:/app
+    environment:
+      - GOEXPERIMENT=simd
+
+  benchmarks:
+    build: .
+    platform: linux/amd64
+    volumes:
+      - .:/app
+    environment:
+      - GOEXPERIMENT=simd
+    command: ["go", "test", "-bench=.", "-benchmem", "./..."]
+
+  coverage:
+    build: .
+    platform: linux/amd64
+    volumes:
+      - .:/app
+    environment:
+      - GOEXPERIMENT=simd
+    command: ["go", "test", "-coverprofile=coverage.out", "./..."]
+
+  lint:
+    build: .
+    platform: linux/amd64
+    volumes:
+      - .:/app
+    environment:
+      - GOEXPERIMENT=simd
+    command: ["golangci-lint", "run", "--build-tags", "goexperiment.simd"]
