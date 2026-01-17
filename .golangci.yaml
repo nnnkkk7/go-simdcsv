@@ -155,9 +155,6 @@ run:
   build-tags: []
 
 output:
-  # Sort results before output
-  sort-results: true
-
   # Sort order for issues
   sort-order:
     - file
