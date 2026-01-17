@@ -157,11 +157,8 @@ run:
 output:
   # Format for output
   formats:
-    text:
+    colored-line-number:
       path: stdout
-      print-issued-lines: true
-      print-linter-name: true
-      colors: true
 
   # Sort results before output
   sort-results: true
