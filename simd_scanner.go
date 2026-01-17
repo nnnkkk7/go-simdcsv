@@ -174,9 +174,9 @@ func processQuotesAndSeparators(quoteMask, sepMask, newlineMask, nextQuoteMask u
 			if quoted != 0 {
 				sepMaskOut &= ^(uint64(1) << sepPos)
 			}
-			workSepMask &= ^uint64(1) << sepPos
+			workSepMask &= ^(uint64(1) << sepPos)
 		default:
-			workNewlineMask &= ^uint64(1) << nlPos
+			workNewlineMask &= ^(uint64(1) << nlPos)
 		}
 	}
 
@@ -204,18 +204,18 @@ func processQuote(quotePos int, quoted, workQuoteMask, quoteMaskOut, nextQuoteMa
 			quoteMaskOut &= ^(uint64(1) << 63)
 			hasDoubleQuote = true
 			boundaryDoubleQuote = true
-		} else if quotePos < 63 && workQuoteMask&(1<<(quotePos+1)) != 0 {
+		} else if quotePos < 63 && workQuoteMask&(uint64(1)<<(quotePos+1)) != 0 {
 			// Adjacent double quote within chunk
 			quoteMaskOut &= ^(uint64(3) << quotePos)
 			hasDoubleQuote = true
-			workQuoteMask &= ^uint64(1) << (quotePos + 1)
+			workQuoteMask &= ^(uint64(1) << (quotePos + 1))
 		} else {
 			quoted = 0 // Closing quote
 		}
 	} else {
 		quoted = ^uint64(0) // Opening quote
 	}
-	workQuoteMask &= ^uint64(1) << quotePos
+	workQuoteMask &= ^(uint64(1) << quotePos)
 	return quoteMaskOut, hasDoubleQuote, boundaryDoubleQuote, quoted, workQuoteMask
 }
 
@@ -307,6 +307,9 @@ func scanBuffer(buf []byte, separatorChar byte) *scanResult {
 			}
 		}
 
+		// Save the initial quoted state for newline invalidation
+		initialQuoted := state.quoted
+
 		// Process quotes and separators, invalidating those inside quoted regions
 		quoteMaskOut, sepMaskOut, hasDoubleQuote, boundaryDoubleQuote := processQuotesAndSeparators(
 			quoteMask, sepMask, newlineMaskOut, nextQuoteMask, &state,
@@ -317,9 +320,16 @@ func scanBuffer(buf []byte, separatorChar byte) *scanResult {
 			state.skipNextQuote = true
 		}
 
-		// Also need to invalidate newlines inside quoted regions
-		// Re-process to get the final newline mask
-		newlineMaskOut = invalidateNewlinesInQuotes(quoteMask, newlineMaskOut, &state)
+		// Save end state and restore initial state for newline processing
+		endQuoted := state.quoted
+		state.quoted = initialQuoted
+
+		// Invalidate newlines inside quoted regions using the processed quote mask
+		// (with double quotes removed) and the initial state
+		newlineMaskOut = invalidateNewlinesInQuotes(quoteMaskOut, newlineMaskOut, &state)
+
+		// Restore end state for the next chunk
+		state.quoted = endQuoted
 
 		// Store results
 		result.quoteMasks = append(result.quoteMasks, quoteMaskOut)

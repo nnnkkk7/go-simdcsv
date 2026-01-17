@@ -139,8 +139,19 @@ func processChunkMasks(
 
 		default: // nlPos
 			if !state.quoted {
-				recordField(buf, offset+uint64(nlPos), state, result, true)
-				recordRow(result, currentRowFirstField, lineNum)
+				absPos := offset + uint64(nlPos)
+				// Check if this is a blank line (no fields recorded yet, empty field)
+				isBlankLine := *currentRowFirstField == len(result.fields) && state.fieldStart == absPos
+				if isBlankLine {
+					// Skip blank line - just advance past the newline
+					state.fieldStart = absPos + 1
+					state.quoteAdjust = 0
+					state.lastClosingQuote = -1
+					(*lineNum)++ // Still count the line number
+				} else {
+					recordField(buf, absPos, state, result, true)
+					recordRow(result, currentRowFirstField, lineNum)
+				}
 			}
 			nlMask = clearBit(nlMask, nlPos)
 		}
@@ -155,9 +166,9 @@ func trailingZerosOr64(mask uint64) int {
 	return bits.TrailingZeros64(mask)
 }
 
-// clearBit clears a bit and all lower bits in a mask.
+// clearBit clears the bit at position pos in mask.
 func clearBit(mask uint64, pos int) uint64 {
-	return mask & (^uint64(1) << pos)
+	return mask & ^(uint64(1) << pos)
 }
 
 // processQuoteEvent handles a quote character.
