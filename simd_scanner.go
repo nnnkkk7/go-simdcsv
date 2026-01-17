@@ -104,14 +104,14 @@ func generateMasksAVX512(data []byte, separator byte) (quote, sep, cr, nl uint64
 
 	// Process low 32 bytes (positions 0-31)
 	// Precondition: data is at least 64 bytes (guaranteed by caller)
-	low := archsimd.LoadInt8x32((*[32]int8)(unsafe.Pointer(&data[0]))) //nolint:gosec // G602: bounds checked by precondition
+	low := archsimd.LoadInt8x32((*[32]int8)(unsafe.Pointer(&data[0])))
 	quoteLowMask := low.Equal(quoteCmp).ToBits()
 	sepLowMask := low.Equal(sepCmp).ToBits()
 	crLowMask := low.Equal(crCmp).ToBits()
 	nlLowMask := low.Equal(nlCmp).ToBits()
 
 	// Process high 32 bytes (positions 32-63)
-	high := archsimd.LoadInt8x32((*[32]int8)(unsafe.Pointer(&data[32]))) //nolint:gosec // G602: bounds checked by precondition
+	high := archsimd.LoadInt8x32((*[32]int8)(unsafe.Pointer(&data[32])))
 	quoteHighMask := high.Equal(quoteCmp).ToBits()
 	sepHighMask := high.Equal(sepCmp).ToBits()
 	crHighMask := high.Equal(crCmp).ToBits()

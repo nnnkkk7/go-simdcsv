@@ -163,6 +163,9 @@ output:
       print-linter-name: true
       colors: true
 
+  # Sort results before output
+  sort-results: true
+
   # Sort order for issues
   sort-order:
     - file

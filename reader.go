@@ -66,7 +66,7 @@ type Reader struct {
 	scanResult         *scanResult  // Scan result (structural character masks)
 	parseResult        *parseResult // Parse result (extracted fields/rows)
 	currentRecordIndex int          // Current record index in parseResult.rows
-	initialized        bool          // Whether scan/parse have been run
+	initialized        bool         // Whether scan/parse have been run
 }
 
 // position represents a position in the input.
