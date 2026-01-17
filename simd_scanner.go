@@ -10,12 +10,46 @@ import (
 	"golang.org/x/sys/cpu"
 )
 
+// =============================================================================
+// AVX-512 CPU Detection and Fallback
+// =============================================================================
+//
+// NOTE: The simd/archsimd package in Go 1.26 is an experimental feature enabled via
+// GOEXPERIMENT=simd. This package is AMD64-specific, and a higher-level portable
+// SIMD package is planned for future development.
+// See: https://github.com/golang/go/issues/73787 (archsimd proposal)
+// See: https://go.dev/doc/go1.26 (Go 1.26 Release Notes)
+//
+// NOTE: The archsimd.Int8x32.Equal().ToBits() method internally uses the VPMOVB2M
+// instruction (AVX-512BW). This instruction causes SIGILL (illegal instruction) on
+// CPUs that do not support AVX-512, including GitHub Actions ubuntu-latest runners,
+// most CI environments, and older CPUs.
+//
+// TODO: Revisit this fallback implementation when the simd/archsimd package provides:
+//   - Mandatory runtime CPU feature checks within the archsimd package
+//     (Issue #73787: "It is an open question whether we want to enforce that a CPU
+//      feature check must be performed before using a vector intrinsic.")
+//   - AVX2-only alternative to ToBits() (using VPMOVMSKB instruction)
+//   - A high-level portable SIMD package
+//
+// TODO: Replace golang.org/x/sys/cpu usage with official archsimd API (e.g.,
+// archsimd.HasAVX512()) when such API becomes available. Currently, the archsimd
+// package does not provide CPU feature detection functions (as of Go 1.26).
+//
+// =============================================================================
+
 // useAVX512 indicates whether AVX-512 instructions are available at runtime.
 // This is set once at init time and used to dispatch to the appropriate implementation.
-// We check for AVX512F, AVX512BW (for ToBits on byte vectors), and AVX512VL.
+//
+// NOTE: All three feature flags are required:
+//   - AVX512F: Foundation 512-bit vector operations
+//   - AVX512BW: Byte/word granularity operations (ToBits() uses VPMOVB2M)
+//   - AVX512VL: 128/256-bit vector support with AVX-512 instructions
 var useAVX512 bool
 
 func init() {
+	// NOTE: Using golang.org/x/sys/cpu for runtime CPU feature detection.
+	// The archsimd package itself does not provide CPU detection functions (as of Go 1.26).
 	useAVX512 = cpu.X86.HasAVX512F && cpu.X86.HasAVX512BW && cpu.X86.HasAVX512VL
 }
 
@@ -40,7 +74,10 @@ type scanResult struct {
 // generateMasks generates 4 types of masks from a 64-byte chunk.
 // It detects positions of quote ("), separator, carriage return (\r), and newline (\n).
 // Precondition: data is at least 64 bytes.
-// This function dispatches to either AVX-512 or scalar implementation based on CPU support.
+//
+// NOTE: This function dispatches to AVX-512 or scalar implementation based on the
+// useAVX512 flag. In environments without AVX-512 support (CI, older CPUs), it falls
+// back to the scalar implementation to avoid SIGILL.
 func generateMasks(data []byte, separator byte) (quote, sep, cr, nl uint64) {
 	if useAVX512 {
 		return generateMasksAVX512(data, separator)
@@ -49,8 +86,15 @@ func generateMasks(data []byte, separator byte) (quote, sep, cr, nl uint64) {
 }
 
 // generateMasksAVX512 generates masks using AVX-512 SIMD instructions.
-// This implementation uses ToBits() which requires AVX-512 support.
 // Precondition: data is at least 64 bytes.
+//
+// NOTE: This implementation uses archsimd.Int8x32.Equal().ToBits().
+// ToBits() internally generates the VPMOVB2M instruction (requires AVX-512BW),
+// so this function cannot be executed on CPUs without AVX-512 support.
+//
+// TODO: If archsimd provides an AVX2-based alternative (using VPMOVMSKB instruction),
+// this implementation could be updated to work with AVX2 as well.
+// Currently, archsimd's ToBits() requires AVX-512.
 func generateMasksAVX512(data []byte, separator byte) (quote, sep, cr, nl uint64) {
 	// Broadcast comparison values to all lanes of 256-bit vectors
 	quoteCmp := archsimd.BroadcastInt8x32('"')

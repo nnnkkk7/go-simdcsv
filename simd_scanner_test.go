@@ -128,11 +128,23 @@ func TestGenerateMasks(t *testing.T) {
 			wantNLPos:    []int{4, 9},
 		},
 		{
+			// Input: "a,b","c""d",e
+			// Pos:    0123456789...
+			//         "   "," "  " ,
+			// Position 0: " (quote)
+			// Position 2: , (separator, inside quotes)
+			// Position 4: " (quote)
+			// Position 5: , (separator)
+			// Position 6: " (quote)
+			// Position 8: " (quote, first of "")
+			// Position 9: " (quote, second of "")
+			// Position 11: " (quote)
+			// Position 12: , (separator)
 			name:         "mixed_quotes_and_separators",
 			input:        makeAligned64([]byte(`"a,b","c""d",e`)),
 			separator:    ',',
-			wantQuotePos: []int{0, 4, 5, 6, 9, 10, 11},
-			wantSepPos:   []int{2, 7, 12},
+			wantQuotePos: []int{0, 4, 6, 8, 9, 11},
+			wantSepPos:   []int{2, 5, 12},
 			wantCRPos:    nil,
 			wantNLPos:    nil,
 		},
