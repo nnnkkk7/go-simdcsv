@@ -800,10 +800,10 @@ func TestSkipNextQuoteFlag(t *testing.T) {
 }
 
 // ============================================================================
-// TestStage1PreprocessBuffer - Test full buffer processing
+// TestScanBuffer - Test full buffer processing
 // ============================================================================
 
-func TestStage1PreprocessBuffer(t *testing.T) {
+func TestScanBuffer(t *testing.T) {
 	tests := []struct {
 		name               string
 		input              []byte
@@ -889,7 +889,7 @@ func TestStage1PreprocessBuffer(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := stage1PreprocessBuffer(tt.input, tt.separator)
+			result := scanBuffer(tt.input, tt.separator)
 
 			if result.chunkCount != tt.wantChunkCount {
 				t.Errorf("%s: chunkCount = %d, want %d",
@@ -924,8 +924,8 @@ func TestStage1PreprocessBuffer(t *testing.T) {
 	}
 }
 
-// TestStage1PreprocessBuffer_MaskContent verifies the actual mask content
-func TestStage1PreprocessBuffer_MaskContent(t *testing.T) {
+// TestScanBuffer_MaskContent verifies the actual mask content
+func TestScanBuffer_MaskContent(t *testing.T) {
 	tests := []struct {
 		name          string
 		input         []byte
@@ -960,7 +960,7 @@ func TestStage1PreprocessBuffer_MaskContent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := stage1PreprocessBuffer(tt.input, tt.separator)
+			result := scanBuffer(tt.input, tt.separator)
 
 			if tt.chunkIdx >= len(result.separatorMasks) {
 				t.Fatalf("chunkIdx %d out of range (have %d chunks)",
@@ -990,8 +990,8 @@ func TestStage1PreprocessBuffer_MaskContent(t *testing.T) {
 	}
 }
 
-// TestStage1PreprocessBuffer_MultiChunk tests processing that spans multiple chunks
-func TestStage1PreprocessBuffer_MultiChunk(t *testing.T) {
+// TestScanBuffer_MultiChunk tests processing that spans multiple chunks
+func TestScanBuffer_MultiChunk(t *testing.T) {
 	// Create input that spans 3 chunks with known structure
 	// Chunk 0: "field1,field2,field3\nfield4,field5,field6\nfield7,field8,fie"
 	// Chunk 1: "ld9\nfield10,field11,field12\nfield13,field14,field15\nfield16,"
@@ -1006,7 +1006,7 @@ func TestStage1PreprocessBuffer_MultiChunk(t *testing.T) {
 	input = append(input, chunk1...)
 	input = append(input, chunk2...)
 
-	result := stage1PreprocessBuffer(input, ',')
+	result := scanBuffer(input, ',')
 
 	if result.chunkCount != 3 {
 		t.Errorf("expected 3 chunks, got %d", result.chunkCount)
@@ -1033,9 +1033,9 @@ func TestStage1PreprocessBuffer_MultiChunk(t *testing.T) {
 	}
 }
 
-// TestStage1PreprocessBuffer_Empty tests empty input handling
-func TestStage1PreprocessBuffer_Empty(t *testing.T) {
-	result := stage1PreprocessBuffer([]byte{}, ',')
+// TestScanBuffer_Empty tests empty input handling
+func TestScanBuffer_Empty(t *testing.T) {
+	result := scanBuffer([]byte{}, ',')
 
 	if result.chunkCount != 0 {
 		t.Errorf("empty input should have 0 chunks, got %d", result.chunkCount)
@@ -1054,8 +1054,8 @@ func TestStage1PreprocessBuffer_Empty(t *testing.T) {
 	}
 }
 
-// TestStage1PreprocessBuffer_LastChunkBits tests partial final chunk handling
-func TestStage1PreprocessBuffer_LastChunkBits(t *testing.T) {
+// TestScanBuffer_LastChunkBits tests partial final chunk handling
+func TestScanBuffer_LastChunkBits(t *testing.T) {
 	tests := []struct {
 		inputLen          int
 		wantLastChunkBits int
@@ -1073,7 +1073,7 @@ func TestStage1PreprocessBuffer_LastChunkBits(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("len_%d", tt.inputLen), func(t *testing.T) {
 			input := make([]byte, tt.inputLen)
-			result := stage1PreprocessBuffer(input, ',')
+			result := scanBuffer(input, ',')
 
 			if result.lastChunkBits != tt.wantLastChunkBits {
 				t.Errorf("lastChunkBits = %d, want %d", result.lastChunkBits, tt.wantLastChunkBits)
@@ -1118,7 +1118,7 @@ func BenchmarkGenerateMasksPadded(b *testing.B) {
 	}
 }
 
-func BenchmarkStage1PreprocessBuffer(b *testing.B) {
+func BenchmarkScanBuffer(b *testing.B) {
 	sizes := []int{64, 1024, 64 * 1024, 1024 * 1024}
 
 	for _, size := range sizes {
@@ -1139,7 +1139,7 @@ func BenchmarkStage1PreprocessBuffer(b *testing.B) {
 			b.ResetTimer()
 			b.SetBytes(int64(size))
 			for i := 0; i < b.N; i++ {
-				stage1PreprocessBuffer(data, ',')
+				scanBuffer(data, ',')
 			}
 		})
 	}

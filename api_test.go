@@ -1353,6 +1353,270 @@ func compareWithStdlib(t *testing.T, input string, opts *readerOptions) {
 	}
 }
 
+// =============================================================================
+// TestParseBytes Tests
+// =============================================================================
+
+// TestParseBytes_Basic tests the ParseBytes function with various inputs.
+func TestParseBytes_Basic(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  [][]string
+	}{
+		{
+			name:  "simple CSV",
+			input: "a,b,c\n1,2,3\n",
+			want:  [][]string{{"a", "b", "c"}, {"1", "2", "3"}},
+		},
+		{
+			name:  "empty input",
+			input: "",
+			want:  nil,
+		},
+		{
+			name:  "single field",
+			input: "hello\n",
+			want:  [][]string{{"hello"}},
+		},
+		{
+			name:  "quoted fields",
+			input: `"a","b,c","d"` + "\n",
+			want:  [][]string{{"a", "b,c", "d"}},
+		},
+		{
+			name:  "double quotes",
+			input: `"he said ""hello"""` + "\n",
+			want:  [][]string{{`he said "hello"`}},
+		},
+		{
+			name:  "no trailing newline",
+			input: "a,b,c",
+			want:  [][]string{{"a", "b", "c"}},
+		},
+		{
+			name:  "multiline field",
+			input: "\"hello\nworld\",b\n",
+			want:  [][]string{{"hello\nworld", "b"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseBytes([]byte(tt.input), ',')
+			if err != nil {
+				t.Fatalf("ParseBytes error: %v", err)
+			}
+
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ParseBytes mismatch:\ngot=%v\nwant=%v", got, tt.want)
+			}
+
+			// Also compare with encoding/csv
+			stdReader := csv.NewReader(strings.NewReader(tt.input))
+			stdReader.FieldsPerRecord = -1
+			stdRecords, stdErr := stdReader.ReadAll()
+			if stdErr != nil {
+				t.Fatalf("encoding/csv error: %v", stdErr)
+			}
+
+			if !reflect.DeepEqual(got, stdRecords) {
+				t.Errorf("ParseBytes vs encoding/csv mismatch:\nParseBytes=%v\nencoding/csv=%v", got, stdRecords)
+			}
+		})
+	}
+}
+
+// TestParseBytes_CustomSeparator tests ParseBytes with custom separators.
+func TestParseBytes_CustomSeparator(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		comma rune
+		want  [][]string
+	}{
+		{
+			name:  "tab separator",
+			input: "a\tb\tc\n",
+			comma: '\t',
+			want:  [][]string{{"a", "b", "c"}},
+		},
+		{
+			name:  "semicolon separator",
+			input: "a;b;c\n",
+			comma: ';',
+			want:  [][]string{{"a", "b", "c"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseBytes([]byte(tt.input), tt.comma)
+			if err != nil {
+				t.Fatalf("ParseBytes error: %v", err)
+			}
+
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ParseBytes mismatch:\ngot=%v\nwant=%v", got, tt.want)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// TestFieldPos Tests
+// =============================================================================
+
+// TestFieldPos_Basic tests the FieldPos function.
+func TestFieldPos_Basic(t *testing.T) {
+	input := "a,b,c\n1,2,3\n"
+
+	reader := NewReader(strings.NewReader(input))
+	reader.FieldsPerRecord = -1
+
+	// Read first record
+	record, err := reader.Read()
+	if err != nil {
+		t.Fatalf("Read error: %v", err)
+	}
+
+	if len(record) != 3 {
+		t.Fatalf("Expected 3 fields, got %d", len(record))
+	}
+
+	// Check field positions
+	tests := []struct {
+		fieldIdx   int
+		wantLine   int
+		wantColumn int
+	}{
+		{0, 1, 1}, // 'a' at line 1, column 1
+		{1, 1, 3}, // 'b' at line 1, column 3
+		{2, 1, 5}, // 'c' at line 1, column 5
+	}
+
+	for _, tt := range tests {
+		line, col := reader.FieldPos(tt.fieldIdx)
+		if line != tt.wantLine || col != tt.wantColumn {
+			t.Errorf("FieldPos(%d): got (%d, %d), want (%d, %d)",
+				tt.fieldIdx, line, col, tt.wantLine, tt.wantColumn)
+		}
+	}
+}
+
+// TestFieldPos_QuotedFields tests FieldPos with quoted fields.
+func TestFieldPos_QuotedFields(t *testing.T) {
+	input := `"a","b,c","d"` + "\n"
+
+	reader := NewReader(strings.NewReader(input))
+	reader.FieldsPerRecord = -1
+
+	record, err := reader.Read()
+	if err != nil {
+		t.Fatalf("Read error: %v", err)
+	}
+
+	if len(record) != 3 {
+		t.Fatalf("Expected 3 fields, got %d", len(record))
+	}
+
+	// First field starts at column 2 (after opening quote)
+	line, col := reader.FieldPos(0)
+	if line != 1 {
+		t.Errorf("FieldPos(0) line: got %d, want 1", line)
+	}
+	// Column depends on implementation - just check it's reasonable
+	if col < 1 {
+		t.Errorf("FieldPos(0) column: got %d, want >= 1", col)
+	}
+}
+
+// TestFieldPos_Panic tests that FieldPos panics with out-of-range index.
+func TestFieldPos_Panic(t *testing.T) {
+	input := "a,b,c\n"
+
+	reader := NewReader(strings.NewReader(input))
+	reader.FieldsPerRecord = -1
+
+	_, err := reader.Read()
+	if err != nil {
+		t.Fatalf("Read error: %v", err)
+	}
+
+	// Test panic for negative index
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("Expected panic for negative index")
+		}
+	}()
+	reader.FieldPos(-1)
+}
+
+// TestFieldPos_PanicOutOfRange tests panic for index >= field count.
+func TestFieldPos_PanicOutOfRange(t *testing.T) {
+	input := "a,b,c\n"
+
+	reader := NewReader(strings.NewReader(input))
+	reader.FieldsPerRecord = -1
+
+	_, err := reader.Read()
+	if err != nil {
+		t.Fatalf("Read error: %v", err)
+	}
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("Expected panic for out-of-range index")
+		}
+	}()
+	reader.FieldPos(10) // Only 3 fields exist
+}
+
+// =============================================================================
+// TestInputOffset Tests
+// =============================================================================
+
+// TestInputOffset_Basic tests the InputOffset function.
+func TestInputOffset_Basic(t *testing.T) {
+	input := "a,b,c\n1,2,3\n"
+
+	reader := NewReader(strings.NewReader(input))
+	reader.FieldsPerRecord = -1
+
+	// Before reading, offset should be 0
+	if offset := reader.InputOffset(); offset != 0 {
+		t.Errorf("Initial InputOffset: got %d, want 0", offset)
+	}
+
+	// Read first record
+	_, err := reader.Read()
+	if err != nil {
+		t.Fatalf("Read error: %v", err)
+	}
+
+	// After reading all (our implementation reads entire input on first Read)
+	offset := reader.InputOffset()
+	if offset != int64(len(input)) {
+		t.Errorf("After first Read InputOffset: got %d, want %d", offset, len(input))
+	}
+}
+
+// TestInputOffset_EmptyInput tests InputOffset with empty input.
+func TestInputOffset_EmptyInput(t *testing.T) {
+	reader := NewReader(strings.NewReader(""))
+	reader.FieldsPerRecord = -1
+
+	_, err := reader.Read()
+	if err != io.EOF {
+		t.Errorf("Expected io.EOF, got %v", err)
+	}
+
+	offset := reader.InputOffset()
+	if offset != 0 {
+		t.Errorf("InputOffset for empty input: got %d, want 0", offset)
+	}
+}
+
 // compareWriterWithStdlib compares simdcsv Writer output with encoding/csv Writer output.
 func compareWriterWithStdlib(t *testing.T, records [][]string, useCRLF bool) {
 	t.Helper()

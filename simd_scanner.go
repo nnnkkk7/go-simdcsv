@@ -6,17 +6,28 @@ import (
 	"math/bits"
 	"simd/archsimd"
 	"unsafe"
+
+	"golang.org/x/sys/cpu"
 )
 
-// stage1State holds state carried between chunks
-type stage1State struct {
+// useAVX512 indicates whether AVX-512 instructions are available at runtime.
+// This is set once at init time and used to dispatch to the appropriate implementation.
+// We check for AVX512F, AVX512BW (for ToBits on byte vectors), and AVX512VL.
+var useAVX512 bool
+
+func init() {
+	useAVX512 = cpu.X86.HasAVX512F && cpu.X86.HasAVX512BW && cpu.X86.HasAVX512VL
+}
+
+// scanState holds state carried between chunks during SIMD scanning
+type scanState struct {
 	quoted        uint64 // Quote state flag (0=outside, ^0=inside)
 	skipNextQuote bool   // Skip quote at next chunk start (for boundary double quotes)
 	prevEndedCR   bool   // Previous chunk ended with CR (for boundary CRLF)
 }
 
-// stage1Result represents Stage 1 processing result
-type stage1Result struct {
+// scanResult represents the result of SIMD scanning (bitmasks for structural characters)
+type scanResult struct {
 	quoteMasks     []uint64 // Quote masks per chunk
 	separatorMasks []uint64 // Separator masks per chunk
 	newlineMasks   []uint64 // Newline masks per chunk (CRLF normalized)
@@ -26,10 +37,21 @@ type stage1Result struct {
 	lastChunkBits  int      // Valid bits in last chunk (if < 64)
 }
 
-// generateMasks generates 4 types of masks from a 64-byte chunk using SIMD.
+// generateMasks generates 4 types of masks from a 64-byte chunk.
 // It detects positions of quote ("), separator, carriage return (\r), and newline (\n).
 // Precondition: data is at least 64 bytes.
+// This function dispatches to either AVX-512 or scalar implementation based on CPU support.
 func generateMasks(data []byte, separator byte) (quote, sep, cr, nl uint64) {
+	if useAVX512 {
+		return generateMasksAVX512(data, separator)
+	}
+	return generateMasksScalar(data, separator)
+}
+
+// generateMasksAVX512 generates masks using AVX-512 SIMD instructions.
+// This implementation uses ToBits() which requires AVX-512 support.
+// Precondition: data is at least 64 bytes.
+func generateMasksAVX512(data []byte, separator byte) (quote, sep, cr, nl uint64) {
 	// Broadcast comparison values to all lanes of 256-bit vectors
 	quoteCmp := archsimd.BroadcastInt8x32('"')
 	sepCmp := archsimd.BroadcastInt8x32(int8(separator))
@@ -57,6 +79,29 @@ func generateMasks(data []byte, separator byte) (quote, sep, cr, nl uint64) {
 	cr = uint64(crLowMask) | (uint64(crHighMask) << 32)
 	nl = uint64(nlLowMask) | (uint64(nlHighMask) << 32)
 
+	return
+}
+
+// generateMasksScalar generates masks using scalar (non-SIMD) operations.
+// This is the fallback implementation for CPUs without AVX-512 support.
+// Precondition: data is at least 64 bytes.
+func generateMasksScalar(data []byte, separator byte) (quote, sep, cr, nl uint64) {
+	for i := 0; i < 64; i++ {
+		b := data[i]
+		bit := uint64(1) << i
+		if b == '"' {
+			quote |= bit
+		}
+		if b == separator {
+			sep |= bit
+		}
+		if b == '\r' {
+			cr |= bit
+		}
+		if b == '\n' {
+			nl |= bit
+		}
+	}
 	return
 }
 
@@ -101,7 +146,7 @@ func generateMasksPadded(data []byte, separator byte) (quote, sep, cr, nl uint64
 // - sepMaskOut: separator mask with separators inside quotes removed
 // - hasDoubleQuote: true if this chunk contains escaped double quotes (needs post-processing)
 // - boundaryDoubleQuote: true if there's a double quote spanning chunk boundary
-func processQuotesAndSeparators(quoteMask, sepMask, newlineMask, nextQuoteMask uint64, state *stage1State) (quoteMaskOut, sepMaskOut uint64, hasDoubleQuote, boundaryDoubleQuote bool) {
+func processQuotesAndSeparators(quoteMask, sepMask, newlineMask, nextQuoteMask uint64, state *scanState) (quoteMaskOut, sepMaskOut uint64, hasDoubleQuote, boundaryDoubleQuote bool) {
 	quoteMaskOut = quoteMask
 	sepMaskOut = sepMask
 
@@ -174,19 +219,19 @@ func processQuote(quotePos int, quoted, workQuoteMask, quoteMaskOut, nextQuoteMa
 	return quoteMaskOut, hasDoubleQuote, boundaryDoubleQuote, quoted, workQuoteMask
 }
 
-// stage1PreprocessBuffer processes the entire buffer in 64-byte chunks.
+// scanBuffer processes the entire buffer in 64-byte chunks using SIMD.
 // It generates structural character masks and handles:
 // - CRLF normalization (CRLF pairs are normalized to LF only in output)
 // - Quote state tracking across chunk boundaries
 // - Boundary double quote detection (quotes spanning chunks)
 // - Recording chunks that need post-processing for double quote unescaping
-func stage1PreprocessBuffer(buf []byte, separatorChar byte) *stage1Result {
+func scanBuffer(buf []byte, separatorChar byte) *scanResult {
 	if len(buf) == 0 {
-		return &stage1Result{}
+		return &scanResult{}
 	}
 
 	chunkCount := (len(buf) + 63) / 64
-	result := &stage1Result{
+	result := &scanResult{
 		quoteMasks:     make([]uint64, 0, chunkCount),
 		separatorMasks: make([]uint64, 0, chunkCount),
 		newlineMasks:   make([]uint64, 0, chunkCount),
@@ -194,7 +239,7 @@ func stage1PreprocessBuffer(buf []byte, separatorChar byte) *stage1Result {
 		chunkCount:     chunkCount,
 	}
 
-	state := stage1State{}
+	state := scanState{}
 
 	for chunkIdx := 0; chunkIdx < chunkCount; chunkIdx++ {
 		offset := chunkIdx * 64
@@ -293,7 +338,7 @@ func stage1PreprocessBuffer(buf []byte, separatorChar byte) *stage1Result {
 }
 
 // invalidateNewlinesInQuotes removes newline bits that are inside quoted regions.
-func invalidateNewlinesInQuotes(quoteMask, newlineMask uint64, state *stage1State) uint64 {
+func invalidateNewlinesInQuotes(quoteMask, newlineMask uint64, state *scanState) uint64 {
 	quoted := state.quoted
 	result := newlineMask
 	workQuoteMask := quoteMask

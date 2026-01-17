@@ -7,16 +7,16 @@ import (
 )
 
 // =============================================================================
-// TestStage2Process - Basic Field Extraction from Masks
+// TestParseBuffer - Basic Field Extraction from Masks
 // =============================================================================
 
-func TestStage2Process(t *testing.T) {
+func TestParseBuffer(t *testing.T) {
 	t.Run("BasicFieldExtraction", func(t *testing.T) {
 		// Input: "a,b,c\n"
 		// Positions: 0=a, 1=comma, 2=b, 3=comma, 4=c, 5=newline
 		buf := []byte("a,b,c\n")
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{0}, // no quotes
 			separatorMasks: []uint64{0b000110}, // bits 1 and 3 set (commas)
 			newlineMasks:   []uint64{0b100000}, // bit 5 set (newline)
@@ -24,7 +24,7 @@ func TestStage2Process(t *testing.T) {
 			lastChunkBits:  6,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		// Should have 3 fields
 		if len(result.fields) != 3 {
@@ -55,7 +55,7 @@ func TestStage2Process(t *testing.T) {
 		// Two rows with 2 fields each
 		buf := []byte("a,b\nc,d\n")
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{0},
 			separatorMasks: []uint64{0b00010010}, // bits 1 and 5 (commas)
 			newlineMasks:   []uint64{0b10001000}, // bits 3 and 7 (newlines)
@@ -63,7 +63,7 @@ func TestStage2Process(t *testing.T) {
 			lastChunkBits:  8,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		// Should have 4 fields total
 		if len(result.fields) != 4 {
@@ -87,7 +87,7 @@ func TestStage2Process(t *testing.T) {
 		// Input: "a,b,c,d,e\n" - 5 fields in one row
 		buf := []byte("a,b,c,d,e\n")
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{0},
 			separatorMasks: []uint64{0b010101010}, // bits 1,3,5,7 (commas)
 			newlineMasks:   []uint64{0b1000000000}, // bit 9 (newline)
@@ -95,7 +95,7 @@ func TestStage2Process(t *testing.T) {
 			lastChunkBits:  10,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.rows) != 1 {
 			t.Fatalf("expected 1 row, got %d", len(result.rows))
@@ -113,7 +113,7 @@ func TestStage2Process(t *testing.T) {
 		copy(buf[0:], "field1,field2,field3\n")
 		copy(buf[64:], "field4,field5\n")
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{0, 0},
 			separatorMasks: []uint64{0b1000010000000, 0b10000000}, // commas in each chunk
 			newlineMasks:   []uint64{1 << 20, 1 << 13},  // newlines
@@ -121,7 +121,7 @@ func TestStage2Process(t *testing.T) {
 			lastChunkBits:  64,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		// Should have multiple rows across chunks
 		if len(result.rows) < 2 {
@@ -139,7 +139,7 @@ func TestFieldExtraction(t *testing.T) {
 		// Input: "a,b,c\n"
 		buf := []byte("a,b,c\n")
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{0},
 			separatorMasks: []uint64{0b000110}, // commas at positions 1, 3
 			newlineMasks:   []uint64{0b100000}, // newline at position 5
@@ -147,7 +147,7 @@ func TestFieldExtraction(t *testing.T) {
 			lastChunkBits:  6,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		expected := []string{"a", "b", "c"}
 		for i, exp := range expected {
@@ -168,7 +168,7 @@ func TestFieldExtraction(t *testing.T) {
 		// Positions: 0=" 1=a 2=" 3=, 4=" 5=b 6=" 7=, 8=" 9=c 10=" 11=\n
 		buf := []byte("\"a\",\"b\",\"c\"\n")
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{0b10010010101}, // quotes at 0,2,4,6,8,10
 			separatorMasks: []uint64{0b000010001000}, // commas at 3,7
 			newlineMasks:   []uint64{0b100000000000}, // newline at 11
@@ -176,7 +176,7 @@ func TestFieldExtraction(t *testing.T) {
 			lastChunkBits:  12,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.fields) != 3 {
 			t.Fatalf("expected 3 fields, got %d", len(result.fields))
@@ -199,7 +199,7 @@ func TestFieldExtraction(t *testing.T) {
 		// Positions: 0=a 1=, 2=" 3=b 4=" 5=, 6=c 7=\n
 		buf := []byte("a,\"b\",c\n")
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{0b00010100}, // quotes at 2,4
 			separatorMasks: []uint64{0b01000010}, // commas at 1,5
 			newlineMasks:   []uint64{0b10000000}, // newline at 7
@@ -207,7 +207,7 @@ func TestFieldExtraction(t *testing.T) {
 			lastChunkBits:  8,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.fields) != 3 {
 			t.Fatalf("expected 3 fields, got %d", len(result.fields))
@@ -228,7 +228,7 @@ func TestFieldExtraction(t *testing.T) {
 		// Positions: 0=a 1=, 2=, 3=c 4=\n
 		buf := []byte("a,,c\n")
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{0},
 			separatorMasks: []uint64{0b00110}, // commas at 1,2
 			newlineMasks:   []uint64{0b10000}, // newline at 4
@@ -236,7 +236,7 @@ func TestFieldExtraction(t *testing.T) {
 			lastChunkBits:  5,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.fields) != 3 {
 			t.Fatalf("expected 3 fields, got %d", len(result.fields))
@@ -257,7 +257,7 @@ func TestFieldExtraction(t *testing.T) {
 		// Empty quoted field in the middle
 		buf := []byte("a,\"\",c\n")
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{0b001100}, // quotes at 2,3
 			separatorMasks: []uint64{0b100010}, // commas at 1,5
 			newlineMasks:   []uint64{0b1000000}, // newline at 6
@@ -265,7 +265,7 @@ func TestFieldExtraction(t *testing.T) {
 			lastChunkBits:  7,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.fields) != 3 {
 			t.Fatalf("expected 3 fields, got %d", len(result.fields))
@@ -285,7 +285,7 @@ func TestFieldExtraction(t *testing.T) {
 		// Input: "hello world,foo bar,baz\n"
 		buf := []byte("hello world,foo bar,baz\n")
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{0},
 			separatorMasks: []uint64{0b000010000000100000000000}, // commas
 			newlineMasks:   []uint64{0b100000000000000000000000}, // newline
@@ -293,7 +293,7 @@ func TestFieldExtraction(t *testing.T) {
 			lastChunkBits:  24,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.fields) != 3 {
 			t.Fatalf("expected 3 fields, got %d", len(result.fields))
@@ -308,7 +308,7 @@ func TestFieldExtraction(t *testing.T) {
 		commaPos := len(longField)
 		nlPos := len(buf) - 1
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{0},
 			separatorMasks: []uint64{uint64(1) << commaPos},
 			newlineMasks:   []uint64{uint64(1) << nlPos},
@@ -316,7 +316,7 @@ func TestFieldExtraction(t *testing.T) {
 			lastChunkBits:  len(buf),
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.fields) != 2 {
 			t.Fatalf("expected 2 fields, got %d", len(result.fields))
@@ -340,7 +340,7 @@ func TestRowsInitialization(t *testing.T) {
 		// Three rows, 2 fields each
 		buf := []byte("a,b\nc,d\ne,f\n")
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{0},
 			separatorMasks: []uint64{0b000100010010}, // commas at 1,5,9
 			newlineMasks:   []uint64{0b100010001000}, // newlines at 3,7,11
@@ -348,7 +348,7 @@ func TestRowsInitialization(t *testing.T) {
 			lastChunkBits:  12,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.rows) != 3 {
 			t.Fatalf("expected 3 rows, got %d", len(result.rows))
@@ -375,7 +375,7 @@ func TestRowsInitialization(t *testing.T) {
 		// Row 1: a,b,c\n (positions 0-5)
 		// Row 2: d,e\n (positions 6-9)
 		// Row 3: f,g,h,i\n (positions 10-17)
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{0},
 			separatorMasks: []uint64{0b0010101010000110}, // commas
 			newlineMasks:   []uint64{0b0100000010100000}, // newlines at 5, 9, 17
@@ -383,7 +383,7 @@ func TestRowsInitialization(t *testing.T) {
 			lastChunkBits:  18,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.rows) != 3 {
 			t.Fatalf("expected 3 rows, got %d", len(result.rows))
@@ -402,7 +402,7 @@ func TestRowsInitialization(t *testing.T) {
 		// Verify line numbers are tracked correctly
 		buf := []byte("row1\nrow2\nrow3\n")
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{0},
 			separatorMasks: []uint64{0},
 			newlineMasks:   []uint64{0b0100000100010000}, // newlines at 4, 9, 14
@@ -410,7 +410,7 @@ func TestRowsInitialization(t *testing.T) {
 			lastChunkBits:  15,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.rows) != 3 {
 			t.Fatalf("expected 3 rows, got %d", len(result.rows))
@@ -429,7 +429,7 @@ func TestRowsInitialization(t *testing.T) {
 		// Row with only one field (no separators)
 		buf := []byte("singlefield\n")
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{0},
 			separatorMasks: []uint64{0},
 			newlineMasks:   []uint64{1 << 11}, // newline at position 11
@@ -437,7 +437,7 @@ func TestRowsInitialization(t *testing.T) {
 			lastChunkBits:  12,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.rows) != 1 {
 			t.Fatalf("expected 1 row, got %d", len(result.rows))
@@ -465,7 +465,7 @@ func TestQuoteHandling(t *testing.T) {
 
 		// Quote positions: 0 (open), 13 (close)
 		// Comma at 14, newline at 23
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{(1 << 0) | (1 << 13)},
 			separatorMasks: []uint64{1 << 14},
 			newlineMasks:   []uint64{1 << 23},
@@ -473,7 +473,7 @@ func TestQuoteHandling(t *testing.T) {
 			lastChunkBits:  24,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.fields) != 2 {
 			t.Fatalf("expected 2 fields, got %d", len(result.fields))
@@ -491,7 +491,7 @@ func TestQuoteHandling(t *testing.T) {
 		// Verify quoteAdjust is applied correctly to skip quote characters
 		buf := []byte("\"abc\"\n")
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{(1 << 0) | (1 << 4)}, // quotes at 0 and 4
 			separatorMasks: []uint64{0},
 			newlineMasks:   []uint64{1 << 5},
@@ -499,7 +499,7 @@ func TestQuoteHandling(t *testing.T) {
 			lastChunkBits:  6,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.fields) != 1 {
 			t.Fatalf("expected 1 field, got %d", len(result.fields))
@@ -517,7 +517,7 @@ func TestQuoteHandling(t *testing.T) {
 		// Test tracking of last closing quote position
 		buf := []byte("\"a\",\"b\"\n")
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{(1 << 0) | (1 << 2) | (1 << 4) | (1 << 6)},
 			separatorMasks: []uint64{1 << 3},
 			newlineMasks:   []uint64{1 << 7},
@@ -525,7 +525,7 @@ func TestQuoteHandling(t *testing.T) {
 			lastChunkBits:  8,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.fields) != 2 {
 			t.Fatalf("expected 2 fields, got %d", len(result.fields))
@@ -577,7 +577,7 @@ func TestQuoteHandling(t *testing.T) {
 			nlMask1 = 1 << (nl - 64)
 		}
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{quoteMask0, quoteMask1},
 			separatorMasks: []uint64{sepMask0, sepMask1},
 			newlineMasks:   []uint64{nlMask0, nlMask1},
@@ -585,7 +585,7 @@ func TestQuoteHandling(t *testing.T) {
 			lastChunkBits:  64,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.fields) < 2 {
 			t.Fatalf("expected at least 2 fields, got %d", len(result.fields))
@@ -594,12 +594,12 @@ func TestQuoteHandling(t *testing.T) {
 
 	t.Run("QuotedFieldWithComma", func(t *testing.T) {
 		// Comma inside quotes should not be treated as separator
-		// Stage 1 should have already filtered this out of separatorMask
+		// Scan should have already filtered this out of separatorMask
 		buf := []byte("\"a,b\",c\n")
 
-		// The comma at position 2 is inside quotes, so Stage 1
+		// The comma at position 2 is inside quotes, so Scan
 		// would not include it in separatorMask
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{(1 << 0) | (1 << 4)}, // quotes at 0,4
 			separatorMasks: []uint64{1 << 5},               // only comma at 5
 			newlineMasks:   []uint64{1 << 7},
@@ -607,7 +607,7 @@ func TestQuoteHandling(t *testing.T) {
 			lastChunkBits:  8,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.fields) != 2 {
 			t.Fatalf("expected 2 fields, got %d", len(result.fields))
@@ -625,9 +625,9 @@ func TestQuoteHandling(t *testing.T) {
 		// Newline inside quotes should not be treated as row boundary
 		buf := []byte("\"a\nb\",c\n")
 
-		// The newline at position 2 is inside quotes, so Stage 1
+		// The newline at position 2 is inside quotes, so Scan
 		// would not include it in newlineMask
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{(1 << 0) | (1 << 4)},
 			separatorMasks: []uint64{1 << 5},
 			newlineMasks:   []uint64{1 << 7}, // only the final newline
@@ -635,7 +635,7 @@ func TestQuoteHandling(t *testing.T) {
 			lastChunkBits:  8,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.rows) != 1 {
 			t.Errorf("expected 1 row (newline is inside quotes), got %d", len(result.rows))
@@ -729,8 +729,8 @@ func TestDoubleQuoteUnescape(t *testing.T) {
 		// containing double quotes
 		buf := []byte("\"He said \"\"Hi\"\"\",normal\n")
 
-		// Stage 1 would mark chunks with double quotes in postProcChunks
-		s1result := &stage1Result{
+		// Scan would mark chunks with double quotes in postProcChunks
+		sr := &scanResult{
 			quoteMasks:     []uint64{(1 << 0) | (1 << 14)}, // outer quotes
 			separatorMasks: []uint64{1 << 15},
 			newlineMasks:   []uint64{1 << 22},
@@ -739,7 +739,7 @@ func TestDoubleQuoteUnescape(t *testing.T) {
 			lastChunkBits:  23,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.fields) < 1 {
 			t.Fatalf("expected at least 1 field, got %d", len(result.fields))
@@ -755,8 +755,8 @@ func TestDoubleQuoteUnescape(t *testing.T) {
 		// Full test: extract field with double quotes and unescape
 		buf := []byte("\"a\"\"b\"\n")
 
-		s1result := &stage1Result{
-			quoteMasks:     []uint64{(1 << 0) | (1 << 4)}, // outer quotes (inner "" removed by Stage 1)
+		sr := &scanResult{
+			quoteMasks:     []uint64{(1 << 0) | (1 << 4)}, // outer quotes (inner "" removed by Scan)
 			separatorMasks: []uint64{0},
 			newlineMasks:   []uint64{1 << 5},
 			postProcChunks: []int{0},
@@ -764,7 +764,7 @@ func TestDoubleQuoteUnescape(t *testing.T) {
 			lastChunkBits:  6,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.fields) != 1 {
 			t.Fatalf("expected 1 field, got %d", len(result.fields))
@@ -789,14 +789,14 @@ func TestEdgeCases(t *testing.T) {
 	t.Run("EmptyInput", func(t *testing.T) {
 		buf := []byte{}
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{},
 			separatorMasks: []uint64{},
 			newlineMasks:   []uint64{},
 			chunkCount:     0,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.fields) != 0 {
 			t.Errorf("expected 0 fields for empty input, got %d", len(result.fields))
@@ -810,7 +810,7 @@ func TestEdgeCases(t *testing.T) {
 	t.Run("SingleField", func(t *testing.T) {
 		buf := []byte("hello\n")
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{0},
 			separatorMasks: []uint64{0},
 			newlineMasks:   []uint64{1 << 5},
@@ -818,7 +818,7 @@ func TestEdgeCases(t *testing.T) {
 			lastChunkBits:  6,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.fields) != 1 {
 			t.Fatalf("expected 1 field, got %d", len(result.fields))
@@ -838,7 +838,7 @@ func TestEdgeCases(t *testing.T) {
 	t.Run("SingleRow", func(t *testing.T) {
 		buf := []byte("a,b,c,d,e\n")
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{0},
 			separatorMasks: []uint64{0b010101010}, // commas at 1,3,5,7
 			newlineMasks:   []uint64{0b1000000000}, // newline at 9
@@ -846,7 +846,7 @@ func TestEdgeCases(t *testing.T) {
 			lastChunkBits:  10,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.rows) != 1 {
 			t.Errorf("expected 1 row, got %d", len(result.rows))
@@ -861,7 +861,7 @@ func TestEdgeCases(t *testing.T) {
 		// RFC 4180 allows files without trailing newline
 		buf := []byte("a,b,c")
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{0},
 			separatorMasks: []uint64{0b00110}, // commas at 1,3
 			newlineMasks:   []uint64{0},        // no newlines
@@ -869,7 +869,7 @@ func TestEdgeCases(t *testing.T) {
 			lastChunkBits:  5,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		// Should still extract all fields
 		if len(result.fields) != 3 {
@@ -885,7 +885,7 @@ func TestEdgeCases(t *testing.T) {
 	t.Run("MultipleRowsNoTrailingNewline", func(t *testing.T) {
 		buf := []byte("a,b\nc,d")
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{0},
 			separatorMasks: []uint64{0b0100010}, // commas at 1,5
 			newlineMasks:   []uint64{0b0001000}, // newline at 3
@@ -893,7 +893,7 @@ func TestEdgeCases(t *testing.T) {
 			lastChunkBits:  7,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.fields) != 4 {
 			t.Errorf("expected 4 fields, got %d", len(result.fields))
@@ -908,7 +908,7 @@ func TestEdgeCases(t *testing.T) {
 		// Multiple empty rows
 		buf := []byte("\n\n\n")
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{0},
 			separatorMasks: []uint64{0},
 			newlineMasks:   []uint64{0b111}, // newlines at 0,1,2
@@ -916,7 +916,7 @@ func TestEdgeCases(t *testing.T) {
 			lastChunkBits:  3,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		// Each newline creates a row with one empty field
 		if len(result.rows) != 3 {
@@ -934,7 +934,7 @@ func TestEdgeCases(t *testing.T) {
 		// Row with only separators creates empty fields
 		buf := []byte(",,,\n")
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{0},
 			separatorMasks: []uint64{0b0111}, // commas at 0,1,2
 			newlineMasks:   []uint64{0b1000}, // newline at 3
@@ -942,7 +942,7 @@ func TestEdgeCases(t *testing.T) {
 			lastChunkBits:  4,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		// 4 empty fields
 		if len(result.fields) != 4 {
@@ -959,7 +959,7 @@ func TestEdgeCases(t *testing.T) {
 	t.Run("WhitespaceOnly", func(t *testing.T) {
 		buf := []byte("   ,   ,   \n")
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{0},
 			separatorMasks: []uint64{(1 << 3) | (1 << 7)}, // commas at 3,7
 			newlineMasks:   []uint64{1 << 11},
@@ -967,7 +967,7 @@ func TestEdgeCases(t *testing.T) {
 			lastChunkBits:  12,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.fields) != 3 {
 			t.Errorf("expected 3 fields, got %d", len(result.fields))
@@ -990,7 +990,7 @@ func TestEdgeCases(t *testing.T) {
 		buf[31] = ','
 		buf[63] = '\n'
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{0},
 			separatorMasks: []uint64{1 << 31},
 			newlineMasks:   []uint64{1 << 63},
@@ -998,7 +998,7 @@ func TestEdgeCases(t *testing.T) {
 			lastChunkBits:  64,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.fields) != 2 {
 			t.Errorf("expected 2 fields, got %d", len(result.fields))
@@ -1016,7 +1016,7 @@ func TestEdgeCases(t *testing.T) {
 		buf[95] = ','
 		buf[127] = '\n'
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{0, 0},
 			separatorMasks: []uint64{(1 << 31) | (1 << 63), 1 << 31},
 			newlineMasks:   []uint64{0, 1 << 63},
@@ -1024,7 +1024,7 @@ func TestEdgeCases(t *testing.T) {
 			lastChunkBits:  64,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.fields) != 4 {
 			t.Errorf("expected 4 fields, got %d", len(result.fields))
@@ -1036,7 +1036,7 @@ func TestEdgeCases(t *testing.T) {
 		buf := make([]byte, 128)
 		copy(buf[60:], "abcd,efgh\n")
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{0, 0},
 			separatorMasks: []uint64{0, 1 << 0}, // comma at position 64 (start of chunk 2)
 			newlineMasks:   []uint64{0, 1 << 5}, // newline at position 69
@@ -1044,7 +1044,7 @@ func TestEdgeCases(t *testing.T) {
 			lastChunkBits:  64,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.fields) < 2 {
 			t.Errorf("expected at least 2 fields, got %d", len(result.fields))
@@ -1058,11 +1058,11 @@ func TestEdgeCases(t *testing.T) {
 
 func TestCRLFHandling(t *testing.T) {
 	t.Run("CRLFAsNewline", func(t *testing.T) {
-		// CRLF should be normalized by Stage 1, so Stage 2 only sees LF
+		// CRLF should be normalized by Scan, so Parse only sees LF
 		buf := []byte("a,b\r\nc,d\r\n")
 
-		// Stage 1 normalizes CRLF to LF, so newlineMasks only has LF positions
-		s1result := &stage1Result{
+		// Scan normalizes CRLF to LF, so newlineMasks only has LF positions
+		sr := &scanResult{
 			quoteMasks:     []uint64{0},
 			separatorMasks: []uint64{(1 << 1) | (1 << 6)}, // commas
 			newlineMasks:   []uint64{(1 << 4) | (1 << 9)}, // only LF positions
@@ -1070,7 +1070,7 @@ func TestCRLFHandling(t *testing.T) {
 			lastChunkBits:  10,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.rows) != 2 {
 			t.Errorf("expected 2 rows, got %d", len(result.rows))
@@ -1081,7 +1081,7 @@ func TestCRLFHandling(t *testing.T) {
 		// Mix of LF and CRLF
 		buf := []byte("a\nb\r\nc\n")
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     []uint64{0},
 			separatorMasks: []uint64{0},
 			newlineMasks:   []uint64{(1 << 1) | (1 << 4) | (1 << 6)}, // normalized positions
@@ -1089,7 +1089,7 @@ func TestCRLFHandling(t *testing.T) {
 			lastChunkBits:  7,
 		}
 
-		result := stage2Process(buf, s1result)
+		result := parseBuffer(buf, sr)
 
 		if len(result.rows) != 3 {
 			t.Errorf("expected 3 rows, got %d", len(result.rows))
@@ -1125,18 +1125,18 @@ func TestLargeInput(t *testing.T) {
 			}
 		}
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     make([]uint64, chunkCount),
 			separatorMasks: sepMasks,
 			newlineMasks:   nlMasks,
 			chunkCount:     chunkCount,
 			lastChunkBits:  len(data) % 64,
 		}
-		if s1result.lastChunkBits == 0 {
-			s1result.lastChunkBits = 64
+		if sr.lastChunkBits == 0 {
+			sr.lastChunkBits = 64
 		}
 
-		result := stage2Process(data, s1result)
+		result := parseBuffer(data, sr)
 
 		if len(result.rows) != numRows {
 			t.Errorf("expected %d rows, got %d", numRows, len(result.rows))
@@ -1170,18 +1170,18 @@ func TestLargeInput(t *testing.T) {
 			}
 		}
 
-		s1result := &stage1Result{
+		sr := &scanResult{
 			quoteMasks:     make([]uint64, chunkCount),
 			separatorMasks: sepMasks,
 			newlineMasks:   nlMasks,
 			chunkCount:     chunkCount,
 			lastChunkBits:  len(data) % 64,
 		}
-		if s1result.lastChunkBits == 0 {
-			s1result.lastChunkBits = 64
+		if sr.lastChunkBits == 0 {
+			sr.lastChunkBits = 64
 		}
 
-		result := stage2Process(data, s1result)
+		result := parseBuffer(data, sr)
 
 		if len(result.rows) != 1 {
 			t.Errorf("expected 1 row, got %d", len(result.rows))
@@ -1197,7 +1197,7 @@ func TestLargeInput(t *testing.T) {
 // Benchmark Tests
 // =============================================================================
 
-func BenchmarkStage2Process(b *testing.B) {
+func BenchmarkParseBuffer(b *testing.B) {
 	// Generate test data: 10000 rows of "field1,field2,field3\n"
 	numRows := 10000
 	var data []byte
@@ -1220,22 +1220,22 @@ func BenchmarkStage2Process(b *testing.B) {
 		}
 	}
 
-	s1result := &stage1Result{
+	sr := &scanResult{
 		quoteMasks:     make([]uint64, chunkCount),
 		separatorMasks: sepMasks,
 		newlineMasks:   nlMasks,
 		chunkCount:     chunkCount,
 		lastChunkBits:  len(data) % 64,
 	}
-	if s1result.lastChunkBits == 0 {
-		s1result.lastChunkBits = 64
+	if sr.lastChunkBits == 0 {
+		sr.lastChunkBits = 64
 	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		_ = stage2Process(data, s1result)
+		_ = parseBuffer(data, sr)
 	}
 }
 

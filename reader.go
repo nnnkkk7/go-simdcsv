@@ -63,10 +63,10 @@ type Reader struct {
 	lastRecord     []string
 
 	// SIMD processing state
-	stage1Result       *stage1Result // Stage 1 processing result (masks)
-	stage2Result       *stage2Result // Stage 2 processing result (fields/rows)
-	currentRecordIndex int           // Current record index in stage2Result.rows
-	initialized        bool          // Whether Stage 1/2 have been run
+	scanResult         *scanResult  // Scan result (structural character masks)
+	parseResult        *parseResult // Parse result (extracted fields/rows)
+	currentRecordIndex int          // Current record index in parseResult.rows
+	initialized        bool          // Whether scan/parse have been run
 }
 
 // position represents a position in the input.
@@ -101,12 +101,12 @@ func (r *Reader) Read() (record []string, err error) {
 	}
 
 	// Check if we have exhausted all records
-	if r.stage2Result == nil || r.currentRecordIndex >= len(r.stage2Result.rows) {
+	if r.parseResult == nil || r.currentRecordIndex >= len(r.parseResult.rows) {
 		return nil, io.EOF
 	}
 
 	// Get current row info
-	rowInfo := r.stage2Result.rows[r.currentRecordIndex]
+	rowInfo := r.parseResult.rows[r.currentRecordIndex]
 	r.currentRecordIndex++
 
 	// Update line number for error reporting
@@ -159,24 +159,20 @@ func (r *Reader) initialize() error {
 
 	// Empty input: no records
 	if len(r.rawBuffer) == 0 {
-		r.stage2Result = &stage2Result{
+		r.parseResult = &parseResult{
 			fields: nil,
 			rows:   nil,
 		}
 		return nil
 	}
 
-	// Run Stage 1: structural analysis (SIMD mask generation)
+	// Scan: structural analysis using SIMD (generates bitmasks)
 	separatorChar := byte(r.Comma)
-	r.stage1Result = stage1PreprocessBuffer(r.rawBuffer, separatorChar)
+	r.scanResult = scanBuffer(r.rawBuffer, separatorChar)
 
-	// Run Stage 2: data extraction (field/row building)
-	r.stage2Result = stage2Process(r.rawBuffer, r.stage1Result)
-
-	// Mark fields that need double quote unescaping
-	if len(r.stage1Result.postProcChunks) > 0 {
-		postProcessFields(r.rawBuffer, r.stage2Result, r.stage1Result.postProcChunks)
-	}
+	// Parse: extract fields and rows from scan result
+	// Note: parseBuffer already calls postProcessFields internally
+	r.parseResult = parseBuffer(r.rawBuffer, r.scanResult)
 
 	// Update offset to end of buffer
 	r.offset = int64(len(r.rawBuffer))
@@ -193,10 +189,10 @@ func (r *Reader) buildRecord(row rowInfo) []string {
 
 	for i := 0; i < fieldCount; i++ {
 		fieldIdx := row.firstField + i
-		if fieldIdx >= len(r.stage2Result.fields) {
+		if fieldIdx >= len(r.parseResult.fields) {
 			break
 		}
-		field := r.stage2Result.fields[fieldIdx]
+		field := r.parseResult.fields[fieldIdx]
 
 		s := extractField(r.rawBuffer, field)
 		if r.TrimLeadingSpace {
@@ -287,37 +283,33 @@ func ParseBytes(data []byte, comma rune) ([][]string, error) {
 		return nil, nil
 	}
 
-	// Run Stage 1: structural analysis (SIMD mask generation)
+	// Scan: structural analysis using SIMD (generates bitmasks)
 	separatorChar := byte(comma)
-	s1Result := stage1PreprocessBuffer(data, separatorChar)
+	sr := scanBuffer(data, separatorChar)
 
-	// Run Stage 2: data extraction (field/row building)
-	s2Result := stage2Process(data, s1Result)
+	// Parse: extract fields and rows from scan result
+	// Note: parseBuffer already calls postProcessFields internally
+	pr := parseBuffer(data, sr)
 
-	// Mark fields that need double quote unescaping
-	if len(s1Result.postProcChunks) > 0 {
-		postProcessFields(data, s2Result, s1Result.postProcChunks)
-	}
-
-	// Convert stage2Result to [][]string
-	return buildRecords(data, s2Result), nil
+	// Convert parseResult to [][]string
+	return buildRecords(data, pr), nil
 }
 
-// buildRecords converts a stage2Result to [][]string
-func buildRecords(buf []byte, s2 *stage2Result) [][]string {
-	if s2 == nil || len(s2.rows) == 0 {
+// buildRecords converts a parseResult to [][]string
+func buildRecords(buf []byte, pr *parseResult) [][]string {
+	if pr == nil || len(pr.rows) == 0 {
 		return nil
 	}
 
-	records := make([][]string, len(s2.rows))
-	for rowIdx, row := range s2.rows {
+	records := make([][]string, len(pr.rows))
+	for rowIdx, row := range pr.rows {
 		record := make([]string, row.fieldCount)
 		for i := 0; i < row.fieldCount; i++ {
 			fieldIdx := row.firstField + i
-			if fieldIdx >= len(s2.fields) {
+			if fieldIdx >= len(pr.fields) {
 				break
 			}
-			record[i] = extractField(buf, s2.fields[fieldIdx])
+			record[i] = extractField(buf, pr.fields[fieldIdx])
 		}
 		records[rowIdx] = record
 	}
