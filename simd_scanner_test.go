@@ -678,10 +678,10 @@ func TestChunkBoundaryQuotes(t *testing.T) {
 	}{
 		{
 			name:                "boundary_double_quote_escape",
-			chunk1:              append(append(make([]byte, 62), '"'), '"'),
+			chunk1:              append(make([]byte, 63), '"'), // only quote at position 63
 			chunk2:              append([]byte{'"'}, make([]byte, 63)...),
 			chunk1Quoted:        true, // we're inside a quoted field
-			wantSkipNextQuote:   true, // the "" escape spans boundary
+			wantSkipNextQuote:   true, // the "" escape spans boundary (pos 63 + chunk2 pos 0)
 			wantChunk2QuoteSkip: true,
 			description:         "Double quote escape spanning chunk boundary",
 		},
