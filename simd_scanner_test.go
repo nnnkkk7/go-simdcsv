@@ -728,21 +728,36 @@ func TestChunkBoundaryQuotes(t *testing.T) {
 			quoteAtChunk1End := quote1&(1<<63) != 0
 			quoteAtChunk2Start := quote2&1 != 0
 
+			// Calculate quote state at position 63 by processing all quotes before it.
+			// We need to know if we're inside a quoted region when we reach position 63.
+			// Start with the initial state (chunk1Quoted), then toggle for each quote.
+			quotedAtPos63 := tt.chunk1Quoted
+			quotesBeforePos63 := quote1 & ((uint64(1) << 63) - 1) // mask off bit 63
+			// Count quotes before position 63 - odd count means state toggled
+			quoteCount := 0
+			for mask := quotesBeforePos63; mask != 0; mask &= mask - 1 {
+				quoteCount++
+			}
+			if quoteCount%2 == 1 {
+				quotedAtPos63 = !quotedAtPos63
+			}
+
 			// Simulate double quote detection at boundary
 			// This happens when:
-			// 1. We're inside a quoted region (chunk1Quoted)
+			// 1. We're inside a quoted region at position 63 (after processing all prior quotes)
 			// 2. Quote at position 63 of chunk1
 			// 3. Quote at position 0 of chunk2
 			skipNextQuote := false
-			if tt.chunk1Quoted && quoteAtChunk1End && quoteAtChunk2Start {
+			if quotedAtPos63 && quoteAtChunk1End && quoteAtChunk2Start {
 				skipNextQuote = true
 			}
 
 			if skipNextQuote != tt.wantSkipNextQuote {
-				t.Errorf("%s:\n  skipNextQuote = %v, want %v\n  quoteAtChunk1End = %v\n  quoteAtChunk2Start = %v\n  chunk1:\n%s  chunk2:\n%s",
+				t.Errorf("%s:\n  skipNextQuote = %v, want %v\n  quoteAtChunk1End = %v\n  quoteAtChunk2Start = %v\n  quotedAtPos63 = %v (initial=%v, toggles=%d)\n  chunk1:\n%s  chunk2:\n%s",
 					tt.description,
 					skipNextQuote, tt.wantSkipNextQuote,
 					quoteAtChunk1End, quoteAtChunk2Start,
+					quotedAtPos63, tt.chunk1Quoted, quoteCount,
 					hexDump(tt.chunk1, "    "),
 					hexDump(tt.chunk2, "    "))
 			}
