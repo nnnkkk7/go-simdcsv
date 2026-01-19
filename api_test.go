@@ -1653,3 +1653,361 @@ func compareWriterWithStdlib(t *testing.T, records [][]string, useCRLF bool) {
 			stdBuf.String(), simdBuf.String())
 	}
 }
+
+// =============================================================================
+// Benchmark Comparisons: simdcsv vs encoding/csv
+// =============================================================================
+
+// generateSimpleCSV generates CSV data with simple unquoted fields.
+func generateSimpleCSV(numRows, numCols int) []byte {
+	var buf bytes.Buffer
+	for i := 0; i < numRows; i++ {
+		for j := 0; j < numCols; j++ {
+			if j > 0 {
+				buf.WriteByte(',')
+			}
+			buf.WriteString("field")
+		}
+		buf.WriteByte('\n')
+	}
+	return buf.Bytes()
+}
+
+// generateQuotedCSV generates CSV data with quoted fields containing commas.
+func generateQuotedCSV(numRows, numCols int) []byte {
+	var buf bytes.Buffer
+	for i := 0; i < numRows; i++ {
+		for j := 0; j < numCols; j++ {
+			if j > 0 {
+				buf.WriteByte(',')
+			}
+			buf.WriteString(`"field,with,commas"`)
+		}
+		buf.WriteByte('\n')
+	}
+	return buf.Bytes()
+}
+
+// generateMixedCSV generates CSV data with mixed quoted/unquoted fields.
+func generateMixedCSV(numRows, numCols int) []byte {
+	var buf bytes.Buffer
+	for i := 0; i < numRows; i++ {
+		for j := 0; j < numCols; j++ {
+			if j > 0 {
+				buf.WriteByte(',')
+			}
+			if j%2 == 0 {
+				buf.WriteString("simple")
+			} else {
+				buf.WriteString(`"quoted,field"`)
+			}
+		}
+		buf.WriteByte('\n')
+	}
+	return buf.Bytes()
+}
+
+// generateEscapedQuotesCSV generates CSV data with escaped double quotes.
+func generateEscapedQuotesCSV(numRows, numCols int) []byte {
+	var buf bytes.Buffer
+	for i := 0; i < numRows; i++ {
+		for j := 0; j < numCols; j++ {
+			if j > 0 {
+				buf.WriteByte(',')
+			}
+			buf.WriteString(`"he said ""hello"" to me"`)
+		}
+		buf.WriteByte('\n')
+	}
+	return buf.Bytes()
+}
+
+// =============================================================================
+// ReadAll Benchmarks - Simple CSV
+// =============================================================================
+
+func BenchmarkReadAll_Simple_1K_Stdlib(b *testing.B) {
+	data := generateSimpleCSV(1000, 10)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		reader := csv.NewReader(bytes.NewReader(data))
+		reader.FieldsPerRecord = -1
+		_, _ = reader.ReadAll()
+	}
+}
+
+func BenchmarkReadAll_Simple_1K_SIMD(b *testing.B) {
+	data := generateSimpleCSV(1000, 10)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		reader := NewReader(bytes.NewReader(data))
+		reader.FieldsPerRecord = -1
+		_, _ = reader.ReadAll()
+	}
+}
+
+func BenchmarkReadAll_Simple_10K_Stdlib(b *testing.B) {
+	data := generateSimpleCSV(10000, 10)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		reader := csv.NewReader(bytes.NewReader(data))
+		reader.FieldsPerRecord = -1
+		_, _ = reader.ReadAll()
+	}
+}
+
+func BenchmarkReadAll_Simple_10K_SIMD(b *testing.B) {
+	data := generateSimpleCSV(10000, 10)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		reader := NewReader(bytes.NewReader(data))
+		reader.FieldsPerRecord = -1
+		_, _ = reader.ReadAll()
+	}
+}
+
+func BenchmarkReadAll_Simple_100K_Stdlib(b *testing.B) {
+	data := generateSimpleCSV(100000, 10)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		reader := csv.NewReader(bytes.NewReader(data))
+		reader.FieldsPerRecord = -1
+		_, _ = reader.ReadAll()
+	}
+}
+
+func BenchmarkReadAll_Simple_100K_SIMD(b *testing.B) {
+	data := generateSimpleCSV(100000, 10)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		reader := NewReader(bytes.NewReader(data))
+		reader.FieldsPerRecord = -1
+		_, _ = reader.ReadAll()
+	}
+}
+
+// =============================================================================
+// ReadAll Benchmarks - Quoted CSV
+// =============================================================================
+
+func BenchmarkReadAll_Quoted_1K_Stdlib(b *testing.B) {
+	data := generateQuotedCSV(1000, 10)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		reader := csv.NewReader(bytes.NewReader(data))
+		reader.FieldsPerRecord = -1
+		_, _ = reader.ReadAll()
+	}
+}
+
+func BenchmarkReadAll_Quoted_1K_SIMD(b *testing.B) {
+	data := generateQuotedCSV(1000, 10)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		reader := NewReader(bytes.NewReader(data))
+		reader.FieldsPerRecord = -1
+		_, _ = reader.ReadAll()
+	}
+}
+
+func BenchmarkReadAll_Quoted_10K_Stdlib(b *testing.B) {
+	data := generateQuotedCSV(10000, 10)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		reader := csv.NewReader(bytes.NewReader(data))
+		reader.FieldsPerRecord = -1
+		_, _ = reader.ReadAll()
+	}
+}
+
+func BenchmarkReadAll_Quoted_10K_SIMD(b *testing.B) {
+	data := generateQuotedCSV(10000, 10)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		reader := NewReader(bytes.NewReader(data))
+		reader.FieldsPerRecord = -1
+		_, _ = reader.ReadAll()
+	}
+}
+
+// =============================================================================
+// ReadAll Benchmarks - Mixed CSV
+// =============================================================================
+
+func BenchmarkReadAll_Mixed_1K_Stdlib(b *testing.B) {
+	data := generateMixedCSV(1000, 10)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		reader := csv.NewReader(bytes.NewReader(data))
+		reader.FieldsPerRecord = -1
+		_, _ = reader.ReadAll()
+	}
+}
+
+func BenchmarkReadAll_Mixed_1K_SIMD(b *testing.B) {
+	data := generateMixedCSV(1000, 10)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		reader := NewReader(bytes.NewReader(data))
+		reader.FieldsPerRecord = -1
+		_, _ = reader.ReadAll()
+	}
+}
+
+func BenchmarkReadAll_Mixed_10K_Stdlib(b *testing.B) {
+	data := generateMixedCSV(10000, 10)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		reader := csv.NewReader(bytes.NewReader(data))
+		reader.FieldsPerRecord = -1
+		_, _ = reader.ReadAll()
+	}
+}
+
+func BenchmarkReadAll_Mixed_10K_SIMD(b *testing.B) {
+	data := generateMixedCSV(10000, 10)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		reader := NewReader(bytes.NewReader(data))
+		reader.FieldsPerRecord = -1
+		_, _ = reader.ReadAll()
+	}
+}
+
+// =============================================================================
+// ReadAll Benchmarks - Escaped Quotes CSV
+// =============================================================================
+
+func BenchmarkReadAll_EscapedQuotes_1K_Stdlib(b *testing.B) {
+	data := generateEscapedQuotesCSV(1000, 10)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		reader := csv.NewReader(bytes.NewReader(data))
+		reader.FieldsPerRecord = -1
+		_, _ = reader.ReadAll()
+	}
+}
+
+func BenchmarkReadAll_EscapedQuotes_1K_SIMD(b *testing.B) {
+	data := generateEscapedQuotesCSV(1000, 10)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		reader := NewReader(bytes.NewReader(data))
+		reader.FieldsPerRecord = -1
+		_, _ = reader.ReadAll()
+	}
+}
+
+func BenchmarkReadAll_EscapedQuotes_10K_Stdlib(b *testing.B) {
+	data := generateEscapedQuotesCSV(10000, 10)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		reader := csv.NewReader(bytes.NewReader(data))
+		reader.FieldsPerRecord = -1
+		_, _ = reader.ReadAll()
+	}
+}
+
+func BenchmarkReadAll_EscapedQuotes_10K_SIMD(b *testing.B) {
+	data := generateEscapedQuotesCSV(10000, 10)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		reader := NewReader(bytes.NewReader(data))
+		reader.FieldsPerRecord = -1
+		_, _ = reader.ReadAll()
+	}
+}
+
+// =============================================================================
+// Record-by-Record Read Benchmarks
+// =============================================================================
+
+func BenchmarkRead_RecordByRecord_10K_Stdlib(b *testing.B) {
+	data := generateSimpleCSV(10000, 10)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		reader := csv.NewReader(bytes.NewReader(data))
+		reader.FieldsPerRecord = -1
+		for {
+			_, err := reader.Read()
+			if err == io.EOF {
+				break
+			}
+		}
+	}
+}
+
+func BenchmarkRead_RecordByRecord_10K_SIMD(b *testing.B) {
+	data := generateSimpleCSV(10000, 10)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		reader := NewReader(bytes.NewReader(data))
+		reader.FieldsPerRecord = -1
+		for {
+			_, err := reader.Read()
+			if err == io.EOF {
+				break
+			}
+		}
+	}
+}
+
+// =============================================================================
+// ParseBytes Benchmark (simdcsv-specific zero-copy API)
+// =============================================================================
+
+func BenchmarkParseBytes_Simple_10K(b *testing.B) {
+	data := generateSimpleCSV(10000, 10)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = ParseBytes(data, ',')
+	}
+}
+
+func BenchmarkParseBytes_Quoted_10K(b *testing.B) {
+	data := generateQuotedCSV(10000, 10)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = ParseBytes(data, ',')
+	}
+}
+
+func BenchmarkParseBytes_Mixed_10K(b *testing.B) {
+	data := generateMixedCSV(10000, 10)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = ParseBytes(data, ',')
+	}
+}
+
+func BenchmarkParseBytes_EscapedQuotes_10K(b *testing.B) {
+	data := generateEscapedQuotesCSV(10000, 10)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = ParseBytes(data, ',')
+	}
+}
