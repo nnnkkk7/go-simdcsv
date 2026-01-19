@@ -1,5 +1,8 @@
 # Changelog
 
+## [v0.0.3](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.2...v0.0.3) - 2026-01-19
+- ci: skip build by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/7
+
 ## [v0.0.2](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.1...v0.0.2) - 2026-01-19
 - ci: fix ci trigger by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/4
 - test: divide tests by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/5
