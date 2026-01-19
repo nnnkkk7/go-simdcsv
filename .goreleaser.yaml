@@ -1,0 +1,56 @@
+# GoReleaser v2 configuration
+version: 2
+
+# Commands to run before build
+before:
+  hooks:
+    # Tidy dependencies
+    - go mod tidy
+    # Download dependencies (for cache efficiency)
+    - go mod download
+
+# Build configuration (library only)
+builds: []
+
+# Snapshot build naming convention
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+# CHANGELOG generation settings
+changelog:
+  # Use GitHub native auto-generation
+  use: github-native
+
+# GitHub Release settings
+release:
+  github:
+    owner: nnnkkk7
+    name: go-simdcsv
+
+  # Do not create as draft
+  draft: false
+
+  # Auto-detect prerelease (e.g., v1.0.0-beta.1 is automatically prerelease)
+  prerelease: auto
+
+  # Replace existing release if it exists
+  mode: replace
+
+  # Release notes header
+  header: |
+    ## go-simdcsv {{ .Version }}
+
+    SIMD-optimized CSV reader library for Go.
+
+    **Install / Update**:
+    ```bash
+    go get github.com/nnnkkk7/go-simdcsv@{{ .Tag }}
+    ```
+
+  # Release notes footer
+  footer: |
+    ---
+
+    **Full Changelog**: https://github.com/nnnkkk7/go-simdcsv/compare/{{ .PreviousTag }}...{{ .Tag }}
+
+    **Documentation**: https://github.com/nnnkkk7/go-simdcsv#readme
