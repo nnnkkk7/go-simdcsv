@@ -30,3 +30,22 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Benchmark output
+benchmark.txt
+benchmark*.txt
+
+# HTML coverage report
+coverage.html
+
+# Testdata (large benchmark files)
+testdata/benchmark/*.csv
+
+# Docker
+.docker/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+docs/**
