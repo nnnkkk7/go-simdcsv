@@ -9,8 +9,9 @@ before:
     # Download dependencies (for cache efficiency)
     - go mod download
 
-# Build configuration (library only)
-builds: []
+# Build configuration (library only - no binaries)
+builds:
+  - skip: true
 
 # Snapshot build naming convention
 snapshot:
