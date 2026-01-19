@@ -1,3 +1,3 @@
-package gosimdcsv
+package simdcsv
 
 const Version = "0.0.0"
