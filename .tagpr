@@ -10,7 +10,7 @@
 
     # GitHub Release creation method
     # true: auto create, draft: create draft, false: do not create
-    # Use draft - tagpr creates tag and draft release, GoReleaser updates it
+    # Create draft release, GoReleaser will publish it
     release = draft
 
     # Labels indicating major version upgrade

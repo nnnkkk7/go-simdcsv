@@ -28,14 +28,14 @@ release:
     owner: nnnkkk7
     name: go-simdcsv
 
-  # Do not create as draft
+  # Use existing draft release created by tagpr and publish it
+  use_existing_draft: true
+
+  # Publish the release (not draft)
   draft: false
 
   # Auto-detect prerelease (e.g., v1.0.0-beta.1 is automatically prerelease)
   prerelease: auto
-
-  # Replace existing release if it exists
-  mode: replace
 
   # Release notes header
   header: |
