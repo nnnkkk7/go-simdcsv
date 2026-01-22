@@ -425,152 +425,49 @@ func (r *Reader) findLineStart(row rowInfo) uint64 {
 	return 0
 }
 
-// validateFieldQuotes validates quote usage in a field
-func (r *Reader) validateFieldQuotes(rawStart, rawEnd uint64, lineNum int) error {
-	if rawStart >= uint64(len(r.rawBuffer)) || rawEnd > uint64(len(r.rawBuffer)) || rawStart >= rawEnd {
-		return nil
-	}
-
-	raw := r.rawBuffer[rawStart:rawEnd]
-	if len(raw) == 0 {
-		return nil
-	}
-
-	// Determine if this is a quoted field
-	// When TrimLeadingSpace is enabled, skip leading whitespace before checking
-	isQuotedField := raw[0] == '"'
-	quoteStartOffset := 0
-
-	if !isQuotedField && r.TrimLeadingSpace {
-		// Skip leading whitespace
-		trimIdx := 0
-		for trimIdx < len(raw) && (raw[trimIdx] == ' ' || raw[trimIdx] == '\t') {
-			trimIdx++
-		}
-		if trimIdx > 0 && trimIdx < len(raw) && raw[trimIdx] == '"' {
-			// This is a quoted field with leading whitespace
-			isQuotedField = true
-			quoteStartOffset = trimIdx
-		}
-	}
-
-	if isQuotedField {
-		// Adjust raw to start from the quote for validation
-		if quoteStartOffset > 0 {
-			raw = raw[quoteStartOffset:]
-			rawStart += uint64(quoteStartOffset)
-		}
-		// Quoted field validation
-		// Find the closing quote
-		closingQuoteIdx := -1
-		i := 1
-		for i < len(raw) {
-			if raw[i] == '"' {
-				if i+1 < len(raw) && raw[i+1] == '"' {
-					// Escaped quote, skip both
-					i += 2
-					continue
-				}
-				// This is the closing quote
-				closingQuoteIdx = i
-				break
-			}
-			i++
-		}
-
-		if closingQuoteIdx == -1 {
-			// No closing quote found - unclosed quote
-			return &ParseError{
-				StartLine: lineNum,
-				Line:      lineNum,
-				Column:    int(rawStart) + len(raw), //nolint:gosec // G115: rawStart bounded by buffer size
-				Err:       ErrQuote,
-			}
-		}
-
-		// Check if there's anything after the closing quote (other than separator/newline)
-		afterClose := closingQuoteIdx + 1
-		if afterClose < len(raw) {
-			nextChar := raw[afterClose]
-			if nextChar != ',' && nextChar != '\n' && nextChar != '\r' && nextChar != byte(r.Comma) {
-				// Text after closing quote
-				return &ParseError{
-					StartLine: lineNum,
-					Line:      lineNum,
-					Column:    int(rawStart) + afterClose + 1, //nolint:gosec // G115: rawStart bounded by buffer size
-					Err:       ErrQuote,
-				}
-			}
-		}
-	} else {
-		// Non-quoted field - check for bare quotes
-		for i, b := range raw {
-			if b == '"' {
-				return &ParseError{
-					StartLine: lineNum,
-					Line:      lineNum,
-					Column:    int(rawStart) + i + 1, //nolint:gosec // G115: rawStart bounded by buffer size
-					Err:       ErrBareQuote,
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
-// extractFieldWithTrim extracts a field, handling TrimLeadingSpace properly for quoted fields
+// extractFieldWithTrim extracts a field, handling TrimLeadingSpace properly for quoted fields.
 func (r *Reader) extractFieldWithTrim(field fieldInfo, rawStart, rawEnd uint64) string {
 	// Get the raw field content first
 	s := extractField(r.rawBuffer, field)
 
-	if r.TrimLeadingSpace {
-		// Check if the raw field (before quote removal) starts with whitespace followed by quote
-		if rawStart < uint64(len(r.rawBuffer)) {
-			raw := r.rawBuffer[rawStart:]
-			// Trim leading whitespace to check if it's a quoted field
-			trimIdx := 0
-			for trimIdx < len(raw) && (raw[trimIdx] == ' ' || raw[trimIdx] == '\t') {
-				trimIdx++
-			}
-			if trimIdx > 0 && trimIdx < len(raw) && raw[trimIdx] == '"' {
-				// This is a quoted field with leading whitespace
-				// We need to extract the content properly
-				// Find the quoted content
-				quoteStart := trimIdx
-				quoteEnd := -1
-				i := quoteStart + 1
-				for i < len(raw) && i < int(rawEnd-rawStart) { //nolint:gosec // G115: rawEnd-rawStart bounded by buffer size
-					if raw[i] == '"' {
-						if i+1 < len(raw) && raw[i+1] == '"' {
-							i += 2
-							continue
-						}
-						quoteEnd = i
-						break
-					}
-					i++
-				}
-				if quoteEnd > quoteStart {
-					// Extract content between quotes
-					content := string(raw[quoteStart+1 : quoteEnd])
-					// Unescape double quotes
-					if strings.Contains(content, `""`) {
-						content = strings.ReplaceAll(content, `""`, `"`)
-					}
-					// Normalize CRLF
-					if strings.Contains(content, "\r\n") {
-						content = strings.ReplaceAll(content, "\r\n", "\n")
-					}
-					return content
-				}
-			}
-		}
-		// Standard trimming for non-quoted fields
-		s = strings.TrimLeft(s, " \t")
+	if !r.TrimLeadingSpace {
+		return s
 	}
 
-	return s
+	// Check if the raw field starts with whitespace followed by quote
+	if rawStart >= uint64(len(r.rawBuffer)) {
+		return strings.TrimLeft(s, " \t")
+	}
+
+	raw := r.rawBuffer[rawStart:]
+	isQuoted, quoteOffset := isQuotedFieldStart(raw, true)
+
+	if !isQuoted || quoteOffset == 0 {
+		// Not a quoted field with leading whitespace, just trim
+		return strings.TrimLeft(s, " \t")
+	}
+
+	// Quoted field with leading whitespace - extract content properly
+	quotedData := raw[quoteOffset:]
+	closingQuoteIdx := findClosingQuote(quotedData, 1)
+
+	if closingQuoteIdx <= 0 {
+		return strings.TrimLeft(s, " \t")
+	}
+
+	// Extract content between quotes
+	content := extractQuotedContent(quotedData, closingQuoteIdx)
+
+	// Unescape double quotes
+	if strings.Contains(content, `""`) {
+		content = strings.ReplaceAll(content, `""`, `"`)
+	}
+	// Normalize CRLF
+	if strings.Contains(content, "\r\n") {
+		content = strings.ReplaceAll(content, "\r\n", "\n")
+	}
+
+	return content
 }
 
 // allocateRecord returns a record slice, reusing the previous one if ReuseRecord is enabled
@@ -641,80 +538,4 @@ func NewReaderWithOptions(r io.Reader, opts ReaderOptions) *Reader {
 	reader.chunkSize = opts.ChunkSize
 	reader.zeroCopy = opts.ZeroCopy
 	return reader
-}
-
-// ParseBytes parses a byte slice directly (zero-copy).
-// This function runs Stage 1 and Stage 2 processing and returns all records.
-func ParseBytes(data []byte, comma rune) ([][]string, error) {
-	if len(data) == 0 {
-		return nil, nil
-	}
-
-	// Scan: structural analysis using SIMD (generates bitmasks)
-	separatorChar := byte(comma)
-	sr := scanBuffer(data, separatorChar)
-
-	// Parse: extract fields and rows from scan result
-	// Note: parseBuffer already calls postProcessFields internally
-	pr := parseBuffer(data, sr)
-
-	// Convert parseResult to [][]string
-	return buildRecords(data, pr), nil
-}
-
-// buildRecords converts a parseResult to [][]string
-func buildRecords(buf []byte, pr *parseResult) [][]string {
-	if pr == nil || len(pr.rows) == 0 {
-		return nil
-	}
-
-	records := make([][]string, len(pr.rows))
-	for rowIdx, row := range pr.rows {
-		record := make([]string, row.fieldCount)
-		for i := 0; i < row.fieldCount; i++ {
-			fieldIdx := row.firstField + i
-			if fieldIdx >= len(pr.fields) {
-				break
-			}
-			record[i] = extractField(buf, pr.fields[fieldIdx])
-		}
-		records[rowIdx] = record
-	}
-	return records
-}
-
-// ParseBytesStreaming parses data using a streaming callback function.
-// The callback is invoked for each record parsed from the input.
-// If the callback returns an error, parsing stops and that error is returned.
-func ParseBytesStreaming(data []byte, comma rune, callback func([]string) error) error {
-	if len(data) == 0 {
-		return nil
-	}
-
-	// Stage 1: Structural analysis using SIMD (generates bitmasks)
-	separatorChar := byte(comma)
-	sr := scanBuffer(data, separatorChar)
-
-	// Stage 2: Extract fields and rows from scan result
-	pr := parseBuffer(data, sr)
-
-	if pr == nil || len(pr.rows) == 0 {
-		return nil
-	}
-
-	// Stage 3: Invoke callback for each record
-	for _, row := range pr.rows {
-		record := make([]string, row.fieldCount)
-		for i := 0; i < row.fieldCount; i++ {
-			fieldIdx := row.firstField + i
-			if fieldIdx >= len(pr.fields) {
-				break
-			}
-			record[i] = extractField(data, pr.fields[fieldIdx])
-		}
-		if err := callback(record); err != nil {
-			return err
-		}
-	}
-	return nil
 }
