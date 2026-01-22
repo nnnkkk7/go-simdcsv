@@ -19,7 +19,7 @@ func (r *Reader) validateFieldQuotes(rawStart, rawEnd uint64, lineNum int) error
 	if isQuoted {
 		// Adjust raw to start from the quote for validation
 		adjustedRaw := raw[quoteOffset:]
-		adjustedStart := rawStart + uint64(quoteOffset)
+		adjustedStart := rawStart + uint64(quoteOffset) //nolint:gosec // G115: quoteOffset is always non-negative from isQuotedFieldStart
 		return r.validateQuotedField(adjustedRaw, adjustedStart, lineNum)
 	}
 

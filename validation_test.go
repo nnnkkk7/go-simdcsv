@@ -226,10 +226,8 @@ func TestValidateQuotedField(t *testing.T) {
 						t.Errorf("expected %v, got %v", tt.errType, parseErr.Err)
 					}
 				}
-			} else {
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
+			} else if err != nil {
+				t.Errorf("unexpected error: %v", err)
 			}
 		})
 	}
