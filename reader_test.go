@@ -1158,3 +1158,202 @@ func TestParseBytes_CustomSeparator(t *testing.T) {
 		})
 	}
 }
+
+// =============================================================================
+// ParseBytesStreaming Tests
+// =============================================================================
+
+// TestParseBytesStreaming_Basic tests the ParseBytesStreaming function.
+func TestParseBytesStreaming_Basic(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  [][]string
+	}{
+		{
+			name:  "simple CSV",
+			input: "a,b,c\n1,2,3\n",
+			want:  [][]string{{"a", "b", "c"}, {"1", "2", "3"}},
+		},
+		{
+			name:  "empty input",
+			input: "",
+			want:  nil,
+		},
+		{
+			name:  "single field",
+			input: "hello\n",
+			want:  [][]string{{"hello"}},
+		},
+		{
+			name:  "quoted fields",
+			input: `"a","b,c","d"` + "\n",
+			want:  [][]string{{"a", "b,c", "d"}},
+		},
+		{
+			name:  "multiline field",
+			input: "\"hello\nworld\",b\n",
+			want:  [][]string{{"hello\nworld", "b"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got [][]string
+			err := ParseBytesStreaming([]byte(tt.input), ',', func(record []string) error {
+				// Make a copy to avoid slice reuse issues
+				recordCopy := make([]string, len(record))
+				copy(recordCopy, record)
+				got = append(got, recordCopy)
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("ParseBytesStreaming error: %v", err)
+			}
+
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ParseBytesStreaming mismatch:\ngot=%v\nwant=%v", got, tt.want)
+			}
+
+			// Compare with ParseBytes
+			pbResult, pbErr := ParseBytes([]byte(tt.input), ',')
+			if pbErr != nil {
+				t.Fatalf("ParseBytes error: %v", pbErr)
+			}
+			if !reflect.DeepEqual(got, pbResult) {
+				t.Errorf("ParseBytesStreaming vs ParseBytes mismatch:\nStreaming=%v\nParseBytes=%v", got, pbResult)
+			}
+		})
+	}
+}
+
+// TestParseBytesStreaming_CallbackError tests that callback errors are propagated.
+func TestParseBytesStreaming_CallbackError(t *testing.T) {
+	input := "a,b\nc,d\ne,f\n"
+	expectedErr := io.EOF // Use a recognizable error
+
+	callCount := 0
+	err := ParseBytesStreaming([]byte(input), ',', func(record []string) error {
+		callCount++
+		if callCount == 2 {
+			return expectedErr
+		}
+		return nil
+	})
+
+	if err != expectedErr {
+		t.Errorf("Expected error %v, got %v", expectedErr, err)
+	}
+	if callCount != 2 {
+		t.Errorf("Expected callback to be called 2 times, got %d", callCount)
+	}
+}
+
+// TestParseBytesStreaming_CustomSeparator tests with custom separators.
+func TestParseBytesStreaming_CustomSeparator(t *testing.T) {
+	input := "a\tb\tc\n1\t2\t3\n"
+	want := [][]string{{"a", "b", "c"}, {"1", "2", "3"}}
+
+	var got [][]string
+	err := ParseBytesStreaming([]byte(input), '\t', func(record []string) error {
+		recordCopy := make([]string, len(record))
+		copy(recordCopy, record)
+		got = append(got, recordCopy)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ParseBytesStreaming error: %v", err)
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ParseBytesStreaming mismatch:\ngot=%v\nwant=%v", got, want)
+	}
+}
+
+// =============================================================================
+// NewReaderWithOptions Tests
+// =============================================================================
+
+// TestNewReaderWithOptions_SkipBOM tests the SkipBOM option.
+func TestNewReaderWithOptions_SkipBOM(t *testing.T) {
+	// UTF-8 BOM: EF BB BF
+	bom := []byte{0xEF, 0xBB, 0xBF}
+
+	tests := []struct {
+		name    string
+		input   []byte
+		skipBOM bool
+		want    [][]string
+	}{
+		{
+			name:    "with BOM and SkipBOM enabled",
+			input:   append(bom, []byte("a,b,c\n")...),
+			skipBOM: true,
+			want:    [][]string{{"a", "b", "c"}},
+		},
+		{
+			name:    "with BOM and SkipBOM disabled",
+			input:   append(bom, []byte("a,b,c\n")...),
+			skipBOM: false,
+			// BOM bytes become part of first field
+			want: [][]string{{string(bom) + "a", "b", "c"}},
+		},
+		{
+			name:    "without BOM and SkipBOM enabled",
+			input:   []byte("a,b,c\n"),
+			skipBOM: true,
+			want:    [][]string{{"a", "b", "c"}},
+		},
+		{
+			name:    "short input with SkipBOM enabled",
+			input:   []byte("ab"),
+			skipBOM: true,
+			want:    [][]string{{"ab"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reader := NewReaderWithOptions(
+				strings.NewReader(string(tt.input)),
+				ReaderOptions{SkipBOM: tt.skipBOM},
+			)
+			reader.FieldsPerRecord = -1
+
+			got, err := reader.ReadAll()
+			if err != nil {
+				t.Fatalf("ReadAll error: %v", err)
+			}
+
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ReadAll mismatch:\ngot=%v\nwant=%v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestNewReaderWithOptions_OptionsApplied verifies all options are applied to Reader.
+func TestNewReaderWithOptions_OptionsApplied(t *testing.T) {
+	opts := ReaderOptions{
+		BufferSize: 4096,
+		ChunkSize:  128,
+		ZeroCopy:   true,
+		SkipBOM:    true,
+	}
+
+	reader := NewReaderWithOptions(strings.NewReader("a,b,c\n"), opts)
+
+	// Verify internal fields are set (these are currently reserved for future use)
+	if reader.skipBOM != opts.SkipBOM {
+		t.Errorf("skipBOM not applied: got %v, want %v", reader.skipBOM, opts.SkipBOM)
+	}
+	if reader.bufferSize != opts.BufferSize {
+		t.Errorf("bufferSize not applied: got %v, want %v", reader.bufferSize, opts.BufferSize)
+	}
+	if reader.chunkSize != opts.ChunkSize {
+		t.Errorf("chunkSize not applied: got %v, want %v", reader.chunkSize, opts.ChunkSize)
+	}
+	if reader.zeroCopy != opts.ZeroCopy {
+		t.Errorf("zeroCopy not applied: got %v, want %v", reader.zeroCopy, opts.ZeroCopy)
+	}
+}
