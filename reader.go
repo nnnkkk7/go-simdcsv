@@ -67,6 +67,12 @@ type Reader struct {
 	parseResult        *parseResult // Parse result (extracted fields/rows)
 	currentRecordIndex int          // Current record index in parseResult.rows
 	initialized        bool         // Whether scan/parse have been run
+
+	// Extended options (set via NewReaderWithOptions)
+	skipBOM    bool // Skip UTF-8 BOM if present
+	bufferSize int  // Buffer size hint (reserved for future use)
+	chunkSize  int  // Chunk size hint (reserved for future use)
+	zeroCopy   bool // Zero-copy mode hint (reserved for future use)
 }
 
 // position represents a position in the input.
@@ -237,6 +243,13 @@ func (r *Reader) initialize() error {
 	r.rawBuffer, err = io.ReadAll(r.r)
 	if err != nil {
 		return err
+	}
+
+	// Skip UTF-8 BOM (EF BB BF) if enabled and present
+	if r.skipBOM && len(r.rawBuffer) >= 3 {
+		if r.rawBuffer[0] == 0xEF && r.rawBuffer[1] == 0xBB && r.rawBuffer[2] == 0xBF {
+			r.rawBuffer = r.rawBuffer[3:]
+		}
 	}
 
 	// Empty input: no records
@@ -623,7 +636,10 @@ type ReaderOptions struct {
 // NewReaderWithOptions creates a Reader with extended options.
 func NewReaderWithOptions(r io.Reader, opts ReaderOptions) *Reader {
 	reader := NewReader(r)
-	// TODO: Apply options
+	reader.skipBOM = opts.SkipBOM
+	reader.bufferSize = opts.BufferSize
+	reader.chunkSize = opts.ChunkSize
+	reader.zeroCopy = opts.ZeroCopy
 	return reader
 }
 
@@ -671,6 +687,34 @@ func buildRecords(buf []byte, pr *parseResult) [][]string {
 // The callback is invoked for each record parsed from the input.
 // If the callback returns an error, parsing stops and that error is returned.
 func ParseBytesStreaming(data []byte, comma rune, callback func([]string) error) error {
-	// TODO: Implement SIMD-accelerated parsing
+	if len(data) == 0 {
+		return nil
+	}
+
+	// Stage 1: Structural analysis using SIMD (generates bitmasks)
+	separatorChar := byte(comma)
+	sr := scanBuffer(data, separatorChar)
+
+	// Stage 2: Extract fields and rows from scan result
+	pr := parseBuffer(data, sr)
+
+	if pr == nil || len(pr.rows) == 0 {
+		return nil
+	}
+
+	// Stage 3: Invoke callback for each record
+	for _, row := range pr.rows {
+		record := make([]string, row.fieldCount)
+		for i := 0; i < row.fieldCount; i++ {
+			fieldIdx := row.firstField + i
+			if fieldIdx >= len(pr.fields) {
+				break
+			}
+			record[i] = extractField(data, pr.fields[fieldIdx])
+		}
+		if err := callback(record); err != nil {
+			return err
+		}
+	}
 	return nil
 }
