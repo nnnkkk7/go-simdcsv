@@ -89,7 +89,7 @@ func TestParseBuffer(t *testing.T) {
 
 		sr := &scanResult{
 			quoteMasks:     []uint64{0},
-			separatorMasks: []uint64{0b010101010}, // bits 1,3,5,7 (commas)
+			separatorMasks: []uint64{0b010101010},  // bits 1,3,5,7 (commas)
 			newlineMasks:   []uint64{0b1000000000}, // bit 9 (newline)
 			chunkCount:     1,
 			lastChunkBits:  10,
@@ -116,7 +116,7 @@ func TestParseBuffer(t *testing.T) {
 		sr := &scanResult{
 			quoteMasks:     []uint64{0, 0},
 			separatorMasks: []uint64{0b1000010000000, 0b10000000}, // commas in each chunk
-			newlineMasks:   []uint64{1 << 20, 1 << 13},  // newlines
+			newlineMasks:   []uint64{1 << 20, 1 << 13},            // newlines
 			chunkCount:     2,
 			lastChunkBits:  64,
 		}
@@ -378,7 +378,7 @@ func TestRowsInitialization(t *testing.T) {
 		// Positions: 0=a 1=, 2=b 3=, 4=c 5=\n 6=d 7=, 8=e 9=\n 10=f 11=, 12=g 13=, 14=h 15=, 16=i 17=\n
 		sr := &scanResult{
 			quoteMasks:     []uint64{0},
-			separatorMasks: []uint64{0b1010100010001010}, // commas at 1,3,7,11,13,15
+			separatorMasks: []uint64{0b1010100010001010},   // commas at 1,3,7,11,13,15
 			newlineMasks:   []uint64{0b100000001000100000}, // newlines at 5, 9, 17
 			chunkCount:     1,
 			lastChunkBits:  18,
@@ -603,7 +603,7 @@ func TestQuoteHandling(t *testing.T) {
 		// would not include it in separatorMask
 		sr := &scanResult{
 			quoteMasks:     []uint64{(1 << 0) | (1 << 4)}, // quotes at 0,4
-			separatorMasks: []uint64{1 << 5},               // only comma at 5
+			separatorMasks: []uint64{1 << 5},              // only comma at 5
 			newlineMasks:   []uint64{1 << 7},
 			chunkCount:     1,
 			lastChunkBits:  8,
@@ -844,7 +844,7 @@ func TestEdgeCases(t *testing.T) {
 
 		sr := &scanResult{
 			quoteMasks:     []uint64{0},
-			separatorMasks: []uint64{0b010101010}, // commas at 1,3,5,7
+			separatorMasks: []uint64{0b010101010},  // commas at 1,3,5,7
 			newlineMasks:   []uint64{0b1000000000}, // newline at 9
 			chunkCount:     1,
 			lastChunkBits:  10,
@@ -868,7 +868,7 @@ func TestEdgeCases(t *testing.T) {
 		sr := &scanResult{
 			quoteMasks:     []uint64{0},
 			separatorMasks: []uint64{0b00110}, // commas at 1,3
-			newlineMasks:   []uint64{0},        // no newlines
+			newlineMasks:   []uint64{0},       // no newlines
 			chunkCount:     1,
 			lastChunkBits:  5,
 		}

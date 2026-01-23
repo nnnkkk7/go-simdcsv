@@ -50,13 +50,9 @@ type Reader struct {
 	// By default, each call to Read returns newly allocated memory owned by the caller.
 	ReuseRecord bool
 
-	// Deprecated: TrailingComma is no longer used.
-	TrailingComma bool
-
 	r io.Reader
 
 	// Internal state
-	numLine        int
 	offset         int64
 	rawBuffer      []byte
 	fieldPositions []position
@@ -115,9 +111,6 @@ func (r *Reader) Read() (record []string, err error) {
 		// Get current row info
 		rowInfo := r.parseResult.rows[r.currentRecordIndex]
 		r.currentRecordIndex++
-
-		// Update line number for error reporting
-		r.numLine = rowInfo.lineNum
 
 		// Check for comment line (line starting with Comment character)
 		if r.Comment != 0 && r.isCommentLine(rowInfo) {

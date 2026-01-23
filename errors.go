@@ -9,10 +9,9 @@ import (
 
 // Sentinel errors returned by [Reader]. These are compatible with [encoding/csv].
 var (
-	ErrBareQuote     = errors.New("bare \" in non-quoted-field")
-	ErrQuote         = errors.New("extraneous or missing \" in quoted-field")
-	ErrFieldCount    = errors.New("wrong number of fields")
-	ErrTrailingComma = errors.New("extra delimiter at end of line") // Deprecated
+	ErrBareQuote  = errors.New("bare \" in non-quoted-field")
+	ErrQuote      = errors.New("extraneous or missing \" in quoted-field")
+	ErrFieldCount = errors.New("wrong number of fields")
 )
 
 // ParseError represents a parsing error with location information

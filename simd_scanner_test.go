@@ -83,13 +83,13 @@ func makeAligned64(data []byte) []byte {
 
 func TestGenerateMasks(t *testing.T) {
 	tests := []struct {
-		name           string
-		input          []byte
-		separator      byte
-		wantQuotePos   []int // expected bit positions for quotes
-		wantSepPos     []int // expected bit positions for separators
-		wantCRPos      []int // expected bit positions for CR
-		wantNLPos      []int // expected bit positions for LF
+		name         string
+		input        []byte
+		separator    byte
+		wantQuotePos []int // expected bit positions for quotes
+		wantSepPos   []int // expected bit positions for separators
+		wantCRPos    []int // expected bit positions for CR
+		wantNLPos    []int // expected bit positions for LF
 	}{
 		{
 			name:         "simple_csv_line",
@@ -279,14 +279,14 @@ func TestGenerateMasks(t *testing.T) {
 
 func TestGenerateMasksPadded(t *testing.T) {
 	tests := []struct {
-		name           string
-		input          []byte
-		separator      byte
-		wantQuotePos   []int
-		wantSepPos     []int
-		wantCRPos      []int
-		wantNLPos      []int
-		wantValidBits  int
+		name          string
+		input         []byte
+		separator     byte
+		wantQuotePos  []int
+		wantSepPos    []int
+		wantCRPos     []int
+		wantNLPos     []int
+		wantValidBits int
 	}{
 		{
 			name:          "single_byte",
@@ -485,8 +485,8 @@ func TestCRLFNormalization(t *testing.T) {
 	tests := []struct {
 		name               string
 		input              []byte
-		wantNewlinePos     []int  // positions in final newline mask (after normalization)
-		wantCRLFNormalized bool   // true if CRLF was normalized
+		wantNewlinePos     []int // positions in final newline mask (after normalization)
+		wantCRLFNormalized bool  // true if CRLF was normalized
 		description        string
 	}{
 		{
@@ -586,19 +586,19 @@ func TestCRLFNormalization(t *testing.T) {
 // CR at byte 63 of chunk N, LF at byte 0 of chunk N+1
 func TestCRLFBoundary(t *testing.T) {
 	tests := []struct {
-		name           string
-		chunk1         []byte // first 64-byte chunk (CR at end)
-		chunk2         []byte // second 64-byte chunk (LF at start)
-		wantChunk1NL   []int  // newline positions in chunk 1
-		wantChunk2NL   []int  // newline positions in chunk 2
-		description    string
+		name         string
+		chunk1       []byte // first 64-byte chunk (CR at end)
+		chunk2       []byte // second 64-byte chunk (LF at start)
+		wantChunk1NL []int  // newline positions in chunk 1
+		wantChunk2NL []int  // newline positions in chunk 2
+		description  string
 	}{
 		{
 			name:         "boundary_crlf",
 			chunk1:       append(make([]byte, 63), '\r'),
 			chunk2:       append([]byte{'\n'}, make([]byte, 63)...),
-			wantChunk1NL: nil,                   // CR at 63 is part of CRLF, not counted here
-			wantChunk2NL: []int{0},              // LF at 0 is the actual newline
+			wantChunk1NL: nil,      // CR at 63 is part of CRLF, not counted here
+			wantChunk2NL: []int{0}, // LF at 0 is the actual newline
 			description:  "CRLF split across chunk boundary",
 		},
 		{
@@ -711,8 +711,8 @@ func TestChunkBoundaryQuotes(t *testing.T) {
 			name:                "boundary_escaped_quote_inside_field",
 			chunk1:              append(append([]byte(`"content`), make([]byte, 55)...), '"'),
 			chunk2:              append([]byte{'"', 'm', 'o', 'r', 'e', '"'}, make([]byte, 58)...),
-			chunk1Quoted:        false,                // starts outside
-			wantSkipNextQuote:   true,                 // "" at boundary
+			chunk1Quoted:        false, // starts outside
+			wantSkipNextQuote:   true,  // "" at boundary
 			wantChunk2QuoteSkip: true,
 			description:         `"content..." with "" escape at boundary`,
 		},
@@ -841,8 +841,8 @@ func TestScanBuffer(t *testing.T) {
 		input              []byte
 		separator          byte
 		wantChunkCount     int
-		wantPostProcChunks []int  // chunks that need post-processing (have escaped quotes)
-		wantFinalQuoted    bool   // should we end in quoted state?
+		wantPostProcChunks []int // chunks that need post-processing (have escaped quotes)
+		wantFinalQuoted    bool  // should we end in quoted state?
 		description        string
 	}{
 		{
@@ -959,14 +959,14 @@ func TestScanBuffer(t *testing.T) {
 // TestScanBuffer_MaskContent verifies the actual mask content
 func TestScanBuffer_MaskContent(t *testing.T) {
 	tests := []struct {
-		name          string
-		input         []byte
-		separator     byte
-		chunkIdx      int
-		wantSepPos    []int
-		wantNLPos     []int
-		wantQuotePos  []int
-		description   string
+		name         string
+		input        []byte
+		separator    byte
+		chunkIdx     int
+		wantSepPos   []int
+		wantNLPos    []int
+		wantQuotePos []int
+		description  string
 	}{
 		{
 			name:         "verify_separator_positions",
@@ -1034,8 +1034,8 @@ func TestScanBuffer_MultiChunk(t *testing.T) {
 	// Chunk 1: bytes 64-127
 	// Chunk 2: bytes 128+
 	chunk0 := strings.Repeat("a,", 20) + "field\n" + strings.Repeat("b,", 10) // ~66 bytes
-	chunk1 := strings.Repeat("c,", 25) + "data\n"                              // ~55 bytes
-	chunk2 := "last\n"                                                         // 5 bytes
+	chunk1 := strings.Repeat("c,", 25) + "data\n"                             // ~55 bytes
+	chunk2 := "last\n"                                                        // 5 bytes
 
 	input := []byte(chunk0 + chunk1 + chunk2)
 
