@@ -1,5 +1,13 @@
 # Changelog
 
+## [v0.0.5](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.4...v0.0.5) - 2026-01-23
+- ci: fix goreleaser mode by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/11
+- test: remove and integrate test by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/13
+- deps: pin and update actions by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/14
+- feat: add extended options and streaming parsing for CSV reader by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/15
+- refactor: split functions and move them by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/16
+- refactor: remove unnecessary stack by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/17
+
 ## [v0.0.4](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.3...v0.0.4) - 2026-01-20
 - ci: fix how to handle draft release by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/9
 
