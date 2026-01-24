@@ -5,6 +5,9 @@ package simdcsv
 import (
 	"bufio"
 	"io"
+	"math/bits"
+	"simd/archsimd"
+	"unsafe"
 )
 
 // Writer writes records using CSV encoding.
@@ -105,15 +108,66 @@ func (w *Writer) Error() error {
 }
 
 // fieldNeedsQuotes reports whether field needs to be quoted.
+// Dispatches to SIMD or scalar implementation based on CPU support and field size.
 func (w *Writer) fieldNeedsQuotes(field string) bool {
 	if len(field) == 0 {
 		return false
 	}
+	// Check leading whitespace first (common case)
 	if field[0] == ' ' || field[0] == '\t' {
 		return true
 	}
+	// Use SIMD for ASCII comma and fields >= 32 bytes
+	if useAVX512 && len(field) >= 32 && w.Comma < 128 {
+		return w.fieldNeedsQuotesSIMD(field)
+	}
+	return w.fieldNeedsQuotesScalar(field)
+}
+
+// fieldNeedsQuotesScalar is the scalar implementation.
+func (w *Writer) fieldNeedsQuotesScalar(field string) bool {
 	for _, c := range field {
 		if c == w.Comma || c == '\n' || c == '\r' || c == '"' {
+			return true
+		}
+	}
+	return false
+}
+
+// fieldNeedsQuotesSIMD uses SIMD to check if field needs quoting.
+// Searches for comma, newline, carriage return, and quote characters.
+func (w *Writer) fieldNeedsQuotesSIMD(field string) bool {
+	// Get byte slice from string without copying (safe for read-only access)
+	data := unsafe.Slice(unsafe.StringData(field), len(field))
+
+	// Broadcast comparison values
+	commaCmp := archsimd.BroadcastInt8x32(int8(w.Comma))
+	nlCmp := archsimd.BroadcastInt8x32('\n')
+	crCmp := archsimd.BroadcastInt8x32('\r')
+	quoteCmp := archsimd.BroadcastInt8x32('"')
+
+	i := 0
+	// Process 32-byte chunks
+	for i+32 <= len(data) {
+		chunk := archsimd.LoadInt8x32((*[32]int8)(unsafe.Pointer(&data[i])))
+
+		// Check for any special character
+		commaMask := chunk.Equal(commaCmp).ToBits()
+		nlMask := chunk.Equal(nlCmp).ToBits()
+		crMask := chunk.Equal(crCmp).ToBits()
+		quoteMask := chunk.Equal(quoteCmp).ToBits()
+
+		// If any special character found, needs quoting
+		if commaMask|nlMask|crMask|quoteMask != 0 {
+			return true
+		}
+		i += 32
+	}
+
+	// Process remaining bytes with scalar
+	for ; i < len(data); i++ {
+		c := data[i]
+		if c == byte(w.Comma) || c == '\n' || c == '\r' || c == '"' {
 			return true
 		}
 	}
@@ -126,6 +180,15 @@ func (w *Writer) writeQuotedField(field string) error {
 		return err
 	}
 
+	// Use SIMD to find quote positions for faster processing
+	if useAVX512 && len(field) >= 32 {
+		return w.writeQuotedFieldSIMD(field)
+	}
+	return w.writeQuotedFieldScalar(field)
+}
+
+// writeQuotedFieldScalar is the scalar implementation.
+func (w *Writer) writeQuotedFieldScalar(field string) error {
 	for _, c := range field {
 		if c == '"' {
 			if _, err := w.w.WriteString(`""`); err != nil {
@@ -135,6 +198,62 @@ func (w *Writer) writeQuotedField(field string) error {
 			if _, err := w.w.WriteRune(c); err != nil {
 				return err
 			}
+		}
+	}
+	return w.w.WriteByte('"')
+}
+
+// writeQuotedFieldSIMD uses SIMD to find quotes and write efficiently.
+func (w *Writer) writeQuotedFieldSIMD(field string) error {
+	data := unsafe.Slice(unsafe.StringData(field), len(field))
+	quoteCmp := archsimd.BroadcastInt8x32('"')
+
+	i := 0
+	lastWritten := 0
+
+	// Process 32-byte chunks
+	for i+32 <= len(data) {
+		chunk := archsimd.LoadInt8x32((*[32]int8)(unsafe.Pointer(&data[i])))
+		mask := uint32(chunk.Equal(quoteCmp).ToBits())
+
+		if mask != 0 {
+			// Found quotes in this chunk - process them
+			for mask != 0 {
+				pos := bits.TrailingZeros32(mask)
+				absPos := i + pos
+
+				// Write everything up to and including this quote
+				if _, err := w.w.WriteString(field[lastWritten : absPos+1]); err != nil {
+					return err
+				}
+				// Write the extra quote for escaping
+				if err := w.w.WriteByte('"'); err != nil {
+					return err
+				}
+				lastWritten = absPos + 1
+				mask &= ^(uint32(1) << pos)
+			}
+		}
+		i += 32
+	}
+
+	// Process remaining bytes
+	for ; i < len(data); i++ {
+		if data[i] == '"' {
+			if _, err := w.w.WriteString(field[lastWritten : i+1]); err != nil {
+				return err
+			}
+			if err := w.w.WriteByte('"'); err != nil {
+				return err
+			}
+			lastWritten = i + 1
+		}
+	}
+
+	// Write any remaining content
+	if lastWritten < len(field) {
+		if _, err := w.w.WriteString(field[lastWritten:]); err != nil {
+			return err
 		}
 	}
 

@@ -2,6 +2,12 @@
 
 package simdcsv
 
+import (
+	"math/bits"
+	"simd/archsimd"
+	"unsafe"
+)
+
 // skipLeadingWhitespace returns the number of leading whitespace bytes (space or tab).
 func skipLeadingWhitespace(data []byte) int {
 	i := 0
@@ -37,7 +43,18 @@ func isQuotedFieldStart(data []byte, trimLeadingSpace bool) (bool, int) {
 // findClosingQuote finds the closing quote in a quoted field.
 // Returns the index of the closing quote, or -1 if not found.
 // Handles escaped double quotes ("").
+// Dispatches to SIMD or scalar implementation based on CPU support and data size.
 func findClosingQuote(data []byte, startAfterOpenQuote int) int {
+	remaining := len(data) - startAfterOpenQuote
+	// Use SIMD for data >= 32 bytes, otherwise scalar is faster
+	if useAVX512 && remaining >= 32 {
+		return findClosingQuoteSIMD(data, startAfterOpenQuote)
+	}
+	return findClosingQuoteScalar(data, startAfterOpenQuote)
+}
+
+// findClosingQuoteScalar is the scalar implementation of findClosingQuote.
+func findClosingQuoteScalar(data []byte, startAfterOpenQuote int) int {
 	i := startAfterOpenQuote
 	for i < len(data) {
 		if data[i] == '"' {
@@ -52,6 +69,55 @@ func findClosingQuote(data []byte, startAfterOpenQuote int) int {
 		i++
 	}
 	return -1
+}
+
+// findClosingQuoteSIMD uses SIMD to find the closing quote.
+// It searches for quote characters in 32-byte chunks using AVX-512.
+func findClosingQuoteSIMD(data []byte, startAfterOpenQuote int) int {
+	quoteCmp := archsimd.BroadcastInt8x32('"')
+	i := startAfterOpenQuote
+
+	// Process 32-byte chunks
+	for i+32 <= len(data) {
+		chunk := archsimd.LoadInt8x32((*[32]int8)(unsafe.Pointer(&data[i])))
+		mask := uint32(chunk.Equal(quoteCmp).ToBits())
+
+		if mask != 0 {
+			// Found at least one quote in this chunk
+			for mask != 0 {
+				// Find the position of the first quote
+				pos := bits.TrailingZeros32(mask)
+				absPos := i + pos
+
+				// Check for escaped quote (double quote)
+				if absPos+1 < len(data) && data[absPos+1] == '"' {
+					// This is an escaped quote, skip both quotes
+					// Clear this bit and the next (if in same chunk)
+					mask &= ^(uint32(1) << pos)
+					if pos+1 < 32 {
+						mask &= ^(uint32(1) << (pos + 1))
+					}
+					// If next quote is in the next chunk, we need to skip it
+					if pos == 31 {
+						i += 32
+						// Skip the first quote of the next iteration
+						if i < len(data) && data[i] == '"' {
+							i++
+						}
+						goto continueLoop
+					}
+					continue
+				}
+				// This is the closing quote
+				return absPos
+			}
+		}
+		i += 32
+	continueLoop:
+	}
+
+	// Process remaining bytes with scalar implementation
+	return findClosingQuoteScalar(data, i)
 }
 
 // extractQuotedContent extracts content from a quoted field, handling unescaping.

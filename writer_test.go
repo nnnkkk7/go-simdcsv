@@ -3,6 +3,8 @@
 package simdcsv
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -158,5 +160,174 @@ func TestWrite_CRLF(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			compareWriterWithStdlib(t, tt.records, true)
 		})
+	}
+}
+
+// =============================================================================
+// fieldNeedsQuotes SIMD Tests
+// =============================================================================
+
+func TestFieldNeedsQuotes_SIMDvsScalar(t *testing.T) {
+	w := NewWriter(nil)
+
+	tests := []struct {
+		name  string
+		field string
+	}{
+		{"empty", ""},
+		{"simple", "hello"},
+		{"with comma", "hello,world"},
+		{"with newline", "hello\nworld"},
+		{"with CR", "hello\rworld"},
+		{"with quote", `hello"world`},
+		{"leading space", " hello"},
+		{"leading tab", "\thello"},
+		{"long no special", strings.Repeat("abcdefgh", 10)},
+		{"long with comma", strings.Repeat("abcdefgh", 10) + ","},
+		{"long with quote", strings.Repeat("abcdefgh", 10) + `"`},
+		{"comma at start", "," + strings.Repeat("x", 50)},
+		{"comma in middle", strings.Repeat("x", 25) + "," + strings.Repeat("y", 25)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scalar := w.fieldNeedsQuotesScalar(tt.field)
+			// Force SIMD path even for short strings by calling directly
+			simd := w.fieldNeedsQuotesSIMD(tt.field)
+
+			if scalar != simd {
+				t.Errorf("fieldNeedsQuotes mismatch for %q: scalar=%v, simd=%v",
+					tt.field, scalar, simd)
+			}
+		})
+	}
+}
+
+func TestFieldNeedsQuotes_LongInput(t *testing.T) {
+	w := NewWriter(nil)
+
+	tests := []struct {
+		name  string
+		field string
+		want  bool
+	}{
+		{
+			name:  "100 chars no special",
+			field: strings.Repeat("abcdefghij", 10),
+			want:  false,
+		},
+		{
+			name:  "100 chars with comma at end",
+			field: strings.Repeat("abcdefghij", 10) + ",",
+			want:  true,
+		},
+		{
+			name:  "100 chars with newline at position 50",
+			field: strings.Repeat("a", 50) + "\n" + strings.Repeat("b", 50),
+			want:  true,
+		},
+		{
+			name:  "100 chars with quote at position 80",
+			field: strings.Repeat("x", 80) + `"` + strings.Repeat("y", 19),
+			want:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := w.fieldNeedsQuotes(tt.field)
+			if got != tt.want {
+				t.Errorf("fieldNeedsQuotes(%q...) = %v, want %v",
+					tt.field[:min(20, len(tt.field))], got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWriteQuotedField_SIMD(t *testing.T) {
+	tests := []struct {
+		name  string
+		field string
+		want  string
+	}{
+		{
+			name:  "long with quotes",
+			field: strings.Repeat("a", 20) + `"` + strings.Repeat("b", 20) + `"` + strings.Repeat("c", 20),
+			want:  `"` + strings.Repeat("a", 20) + `""` + strings.Repeat("b", 20) + `""` + strings.Repeat("c", 20) + `"`,
+		},
+		{
+			name:  "long no quotes",
+			field: strings.Repeat("hello world ", 10),
+			want:  `"` + strings.Repeat("hello world ", 10) + `"`,
+		},
+		{
+			name:  "quote at chunk boundary",
+			field: strings.Repeat("x", 31) + `"` + strings.Repeat("y", 31),
+			want:  `"` + strings.Repeat("x", 31) + `""` + strings.Repeat("y", 31) + `"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			w := NewWriter(&buf)
+			if err := w.Write([]string{tt.field}); err != nil {
+				t.Fatalf("Write error: %v", err)
+			}
+			if err := w.Flush(); err != nil {
+				t.Fatalf("Flush error: %v", err)
+			}
+			got := strings.TrimSuffix(buf.String(), "\n")
+			if got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func BenchmarkFieldNeedsQuotes_Short(b *testing.B) {
+	w := NewWriter(nil)
+	field := "hello,world"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		w.fieldNeedsQuotes(field)
+	}
+}
+
+func BenchmarkFieldNeedsQuotes_Long(b *testing.B) {
+	w := NewWriter(nil)
+	field := strings.Repeat("abcdefgh", 100)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		w.fieldNeedsQuotes(field)
+	}
+}
+
+func BenchmarkFieldNeedsQuotes_LongScalar(b *testing.B) {
+	w := NewWriter(nil)
+	field := strings.Repeat("abcdefgh", 100)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		w.fieldNeedsQuotesScalar(field)
+	}
+}
+
+func BenchmarkFieldNeedsQuotes_LongWithSpecial(b *testing.B) {
+	w := NewWriter(nil)
+	field := strings.Repeat("abcdefgh", 100) + ","
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		w.fieldNeedsQuotes(field)
+	}
+}
+
+func BenchmarkWriteQuotedField_Long(b *testing.B) {
+	field := strings.Repeat("a", 50) + `"` + strings.Repeat("b", 50)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var buf bytes.Buffer
+		w := NewWriter(&buf)
+		_ = w.Write([]string{field})
+		_ = w.Flush()
 	}
 }

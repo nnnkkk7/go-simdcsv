@@ -2,7 +2,10 @@
 
 package simdcsv
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // =============================================================================
 // skipLeadingWhitespace Tests
@@ -239,5 +242,155 @@ func TestExtractQuotedContent(t *testing.T) {
 					tt.input, tt.closingQuoteIdx, got, tt.want)
 			}
 		})
+	}
+}
+
+// =============================================================================
+// findClosingQuote SIMD Tests
+// =============================================================================
+
+func TestFindClosingQuote_SIMDvsScalar(t *testing.T) {
+	tests := []struct {
+		name  string
+		input []byte
+		start int
+	}{
+		{
+			name:  "simple quoted",
+			input: []byte(`"hello"`),
+			start: 1,
+		},
+		{
+			name:  "escaped quote",
+			input: []byte(`"he""llo"`),
+			start: 1,
+		},
+		{
+			name:  "no closing quote",
+			input: []byte(`"hello`),
+			start: 1,
+		},
+		{
+			name:  "empty quoted",
+			input: []byte(`""`),
+			start: 1,
+		},
+		{
+			name:  "multiple escaped quotes",
+			input: []byte(`"a""b""c"`),
+			start: 1,
+		},
+		{
+			name:  "just escaped quote",
+			input: []byte(`""""`),
+			start: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scalar := findClosingQuoteScalar(tt.input, tt.start)
+			// Test SIMD version directly (even for small inputs)
+			simd := findClosingQuoteSIMD(tt.input, tt.start)
+			if scalar != simd {
+				t.Errorf("findClosingQuote mismatch for %q: scalar=%d, simd=%d",
+					tt.input, scalar, simd)
+			}
+		})
+	}
+}
+
+func TestFindClosingQuote_LargeInput(t *testing.T) {
+	// Test with inputs >= 32 bytes to trigger SIMD path
+	tests := []struct {
+		name  string
+		input []byte
+		start int
+		want  int
+	}{
+		{
+			name:  "long field with quote at end",
+			input: []byte(`"` + strings.Repeat("a", 50) + `"`),
+			start: 1,
+			want:  52,
+		},
+		{
+			name:  "long field with escaped quote in middle",
+			input: []byte(`"` + strings.Repeat("a", 20) + `""` + strings.Repeat("b", 20) + `"`),
+			start: 1,
+			want:  44,
+		},
+		{
+			name:  "long field with multiple escaped quotes",
+			input: []byte(`"` + strings.Repeat("a", 10) + `""` + strings.Repeat("b", 10) + `""` + strings.Repeat("c", 10) + `"`),
+			start: 1,
+			want:  36,
+		},
+		{
+			name:  "long field no closing quote",
+			input: []byte(`"` + strings.Repeat("x", 100)),
+			start: 1,
+			want:  -1,
+		},
+		{
+			name:  "escaped quote at chunk boundary (pos 31-32)",
+			input: []byte(`"` + strings.Repeat("a", 30) + `""` + strings.Repeat("b", 10) + `"`),
+			start: 1,
+			want:  44,
+		},
+		{
+			name:  "quote at exactly position 32",
+			input: []byte(`"` + strings.Repeat("a", 31) + `"`),
+			start: 1,
+			want:  33,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := findClosingQuote(tt.input, tt.start)
+			if got != tt.want {
+				t.Errorf("findClosingQuote(%q..., %d) = %d, want %d",
+					string(tt.input[:min(30, len(tt.input))]), tt.start, got, tt.want)
+			}
+			// Also verify scalar and SIMD match
+			scalar := findClosingQuoteScalar(tt.input, tt.start)
+			simd := findClosingQuoteSIMD(tt.input, tt.start)
+			if scalar != simd {
+				t.Errorf("scalar/simd mismatch: scalar=%d, simd=%d", scalar, simd)
+			}
+		})
+	}
+}
+
+func BenchmarkFindClosingQuote_Short(b *testing.B) {
+	input := []byte(`"hello world"`)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		findClosingQuote(input, 1)
+	}
+}
+
+func BenchmarkFindClosingQuote_Long(b *testing.B) {
+	input := []byte(`"` + strings.Repeat("abcdefgh", 100) + `"`)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		findClosingQuote(input, 1)
+	}
+}
+
+func BenchmarkFindClosingQuote_LongScalar(b *testing.B) {
+	input := []byte(`"` + strings.Repeat("abcdefgh", 100) + `"`)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		findClosingQuoteScalar(input, 1)
+	}
+}
+
+func BenchmarkFindClosingQuote_LongWithEscapes(b *testing.B) {
+	input := []byte(`"` + strings.Repeat(`a""b`, 50) + `"`)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		findClosingQuote(input, 1)
 	}
 }

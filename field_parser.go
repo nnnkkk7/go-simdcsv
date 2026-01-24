@@ -5,7 +5,9 @@ package simdcsv
 
 import (
 	"math/bits"
+	"simd/archsimd"
 	"strings"
+	"unsafe"
 )
 
 // parserState holds state carried between chunks during field parsing
@@ -253,13 +255,119 @@ func finalizeLastField(buf []byte, state *parserState, result *parseResult, curr
 	})
 }
 
-// unescapeDoubleQuotes converts double quotes to single quotes
+// unescapeDoubleQuotes converts double quotes ("") to single quotes (").
+// Dispatches to SIMD or scalar implementation based on CPU support and string size.
 func unescapeDoubleQuotes(s string) string {
+	// Use SIMD for strings >= 32 bytes
+	if useAVX512 && len(s) >= 32 {
+		return unescapeDoubleQuotesSIMD(s)
+	}
+	return unescapeDoubleQuotesScalar(s)
+}
+
+// unescapeDoubleQuotesScalar is the scalar implementation.
+func unescapeDoubleQuotesScalar(s string) string {
 	// Fast path: no double quotes
 	if !strings.Contains(s, `""`) {
 		return s
 	}
 	return strings.ReplaceAll(s, `""`, `"`)
+}
+
+// unescapeDoubleQuotesSIMD uses SIMD to find double quotes and unescape them.
+func unescapeDoubleQuotesSIMD(s string) string {
+	data := unsafe.Slice(unsafe.StringData(s), len(s))
+	quoteCmp := archsimd.BroadcastInt8x32('"')
+
+	// First pass: check if there are any double quotes using SIMD
+	hasDoubleQuote := false
+	i := 0
+	for i+32 <= len(data) {
+		chunk := archsimd.LoadInt8x32((*[32]int8)(unsafe.Pointer(&data[i])))
+		mask := uint32(chunk.Equal(quoteCmp).ToBits())
+
+		if mask != 0 {
+			// Check if any quotes are followed by another quote
+			for mask != 0 {
+				pos := bits.TrailingZeros32(mask)
+				absPos := i + pos
+				if absPos+1 < len(data) && data[absPos+1] == '"' {
+					hasDoubleQuote = true
+					break
+				}
+				mask &= ^(uint32(1) << pos)
+			}
+			if hasDoubleQuote {
+				break
+			}
+		}
+		i += 32
+	}
+
+	// Check remaining bytes if no double quote found yet
+	if !hasDoubleQuote {
+		for ; i < len(data)-1; i++ {
+			if data[i] == '"' && data[i+1] == '"' {
+				hasDoubleQuote = true
+				break
+			}
+		}
+	}
+
+	// Fast path: no double quotes found
+	if !hasDoubleQuote {
+		return s
+	}
+
+	// Second pass: build result with double quotes removed
+	// Pre-allocate with estimated size (original - number of removed quotes)
+	result := make([]byte, 0, len(s))
+	lastWritten := 0
+
+	i = 0
+	for i+32 <= len(data) {
+		chunk := archsimd.LoadInt8x32((*[32]int8)(unsafe.Pointer(&data[i])))
+		mask := uint32(chunk.Equal(quoteCmp).ToBits())
+
+		if mask != 0 {
+			for mask != 0 {
+				pos := bits.TrailingZeros32(mask)
+				absPos := i + pos
+
+				if absPos+1 < len(data) && data[absPos+1] == '"' {
+					// Found double quote - write up to and including first quote
+					result = append(result, s[lastWritten:absPos+1]...)
+					lastWritten = absPos + 2 // Skip the second quote
+					// Clear both bits if second quote is in same chunk
+					mask &= ^(uint32(1) << pos)
+					if pos+1 < 32 {
+						mask &= ^(uint32(1) << (pos + 1))
+					}
+					continue
+				}
+				mask &= ^(uint32(1) << pos)
+			}
+		}
+		i += 32
+	}
+
+	// Process remaining bytes
+	for i < len(data)-1 {
+		if data[i] == '"' && data[i+1] == '"' {
+			result = append(result, s[lastWritten:i+1]...)
+			lastWritten = i + 2
+			i += 2
+			continue
+		}
+		i++
+	}
+
+	// Append remaining content
+	if lastWritten < len(s) {
+		result = append(result, s[lastWritten:]...)
+	}
+
+	return string(result)
 }
 
 // postProcessFields marks fields needing double quote unescaping
