@@ -166,30 +166,18 @@ reader := csv.NewReaderWithOptions(r, csv.ReaderOptions{
 
 ## Architecture
 
-The parser uses a 2-stage pipeline:
-
-1. **Stage 1 (SIMD Scan)**: Uses 256-bit SIMD vectors (`archsimd.Int8x32`) to generate bitmasks for structural characters (quotes, separators, newlines) in 64-byte chunks. Handles CRLF normalization and quote state tracking.
-2. **Stage 2 (Field Extraction)**: Processes bitmasks to extract field positions and build strings with proper unescaping (double quote `""` → single quote `"`).
-
 ```
-┌─────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│  Raw Input  │ ──▶ │ Stage 1 (SIMD)  │ ──▶ │ Stage 2 (Scalar)│ ──▶ [][]string
-│  (bytes)    │     │ (bitmasks)      │     │ (extraction)    │
-└─────────────┘     └─────────────────┘     └─────────────────┘
+┌─────────────┐     ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│  Raw Input  │ ──▶ │ scanBuffer() │ ──▶ │ parseBuffer()│ ──▶ │buildRecords()│ ──▶ [][]string
+│   []byte    │     │  (bitmasks)  │     │  (positions) │     │  (strings)   │
+└─────────────┘     └──────────────┘     └──────────────┘     └──────────────┘
 ```
 
-### File Structure
+1. **`scanBuffer()`**: Scans input in 64-byte chunks using 256-bit SIMD vectors (`archsimd.Int8x32`). Detects positions of structural characters (`"`, `,`, `\n`, `\r`) and outputs bitmasks. Handles CRLF normalization and tracks quote state across chunk boundaries.
 
-| File | Responsibility |
-|------|---------------|
-| `reader.go` | Reader struct and encoding/csv compatible API |
-| `writer.go` | Writer struct for CSV output |
-| `simd_scanner.go` | SIMD-accelerated structural character detection |
-| `field_parser.go` | Field extraction from bitmasks |
-| `parse.go` | ParseBytes and ParseBytesStreaming APIs |
-| `quote.go` | Quote processing utilities |
-| `validation.go` | Field quote validation |
-| `errors.go` | Error types (compatible with encoding/csv) |
+2. **`parseBuffer()`**: Iterates through bitmasks to determine field boundaries. Outputs `fieldInfo` (start offset, length) and `rowInfo` (field count per row). Correctly handles quoted fields containing commas or newlines.
+
+3. **`buildRecords()`**: Extracts strings from byte positions. Applies double-quote unescaping (`""` → `"`) for fields that were marked during scanning.
 
 ## Building and Testing
 
@@ -214,11 +202,7 @@ TODO: Add benchmark results here.
 
 ## Contributing
 
-Contributions are welcome. Please ensure:
-
-1. Tests pass: `make docker-test`
-2. Linter passes: `make docker-lint`
-3. New features include tests
+Contributions are welcome! Please open issues or pull requests on GitHub.
 
 ## License
 
