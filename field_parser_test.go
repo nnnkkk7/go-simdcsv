@@ -1414,32 +1414,28 @@ func TestUnescapeDoubleQuotes_EdgeCases(t *testing.T) {
 
 func BenchmarkUnescapeDoubleQuotes_LongNoEscape(b *testing.B) {
 	input := strings.Repeat("abcdefgh", 100)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = unescapeDoubleQuotes(input)
 	}
 }
 
 func BenchmarkUnescapeDoubleQuotes_LongNoEscapeScalar(b *testing.B) {
 	input := strings.Repeat("abcdefgh", 100)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = unescapeDoubleQuotesScalar(input)
 	}
 }
 
 func BenchmarkUnescapeDoubleQuotes_LongWithEscape(b *testing.B) {
 	input := strings.Repeat(`a""b`, 100)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = unescapeDoubleQuotes(input)
 	}
 }
 
 func BenchmarkUnescapeDoubleQuotes_LongWithEscapeScalar(b *testing.B) {
 	input := strings.Repeat(`a""b`, 100)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = unescapeDoubleQuotesScalar(input)
 	}
 }

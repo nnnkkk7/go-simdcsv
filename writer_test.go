@@ -292,8 +292,7 @@ func TestWriteQuotedField_SIMD(t *testing.T) {
 func BenchmarkFieldNeedsQuotes_Short(b *testing.B) {
 	w := NewWriter(nil)
 	field := "hello,world"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		w.fieldNeedsQuotes(field)
 	}
 }
@@ -301,8 +300,7 @@ func BenchmarkFieldNeedsQuotes_Short(b *testing.B) {
 func BenchmarkFieldNeedsQuotes_Long(b *testing.B) {
 	w := NewWriter(nil)
 	field := strings.Repeat("abcdefgh", 100)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		w.fieldNeedsQuotes(field)
 	}
 }
@@ -310,8 +308,7 @@ func BenchmarkFieldNeedsQuotes_Long(b *testing.B) {
 func BenchmarkFieldNeedsQuotes_LongScalar(b *testing.B) {
 	w := NewWriter(nil)
 	field := strings.Repeat("abcdefgh", 100)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		w.fieldNeedsQuotesScalar(field)
 	}
 }
@@ -319,16 +316,14 @@ func BenchmarkFieldNeedsQuotes_LongScalar(b *testing.B) {
 func BenchmarkFieldNeedsQuotes_LongWithSpecial(b *testing.B) {
 	w := NewWriter(nil)
 	field := strings.Repeat("abcdefgh", 100) + ","
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		w.fieldNeedsQuotes(field)
 	}
 }
 
 func BenchmarkWriteQuotedField_Long(b *testing.B) {
 	field := strings.Repeat("a", 50) + `"` + strings.Repeat("b", 50)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		var buf bytes.Buffer
 		w := NewWriter(&buf)
 		_ = w.Write([]string{field})

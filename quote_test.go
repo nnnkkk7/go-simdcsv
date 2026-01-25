@@ -371,32 +371,28 @@ func TestFindClosingQuote_LargeInput(t *testing.T) {
 
 func BenchmarkFindClosingQuote_Short(b *testing.B) {
 	input := []byte(`"hello world"`)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		findClosingQuote(input, 1)
 	}
 }
 
 func BenchmarkFindClosingQuote_Long(b *testing.B) {
 	input := []byte(`"` + strings.Repeat("abcdefgh", 100) + `"`)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		findClosingQuote(input, 1)
 	}
 }
 
 func BenchmarkFindClosingQuote_LongScalar(b *testing.B) {
 	input := []byte(`"` + strings.Repeat("abcdefgh", 100) + `"`)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		findClosingQuoteScalar(input, 1)
 	}
 }
 
 func BenchmarkFindClosingQuote_LongWithEscapes(b *testing.B) {
 	input := []byte(`"` + strings.Repeat(`a""b`, 50) + `"`)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		findClosingQuote(input, 1)
 	}
 }
