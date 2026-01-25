@@ -1,33 +1,35 @@
 # go-simdcsv
 
-> **⚠️ Experimental Project**: This is a showcase project for Go 1.26's experimental `simd/archsimd` package. The SIMD API is unstable and may change in future Go releases. Not recommended for production use.
+[![CI](https://github.com/nnnkkk7/go-simdcsv/actions/workflows/ci.yml/badge.svg)](https://github.com/nnnkkk7/go-simdcsv/actions/workflows/ci.yml)
+ [![Go 1.26+](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+ [![Go Report Card](https://goreportcard.com/badge/github.com/nnnkkk7/go-simdcsv)](https://goreportcard.com/report/github.com/nnnkkk7/go-simdcsv)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-A high-performance CSV parser for Go using SIMD (Single Instruction Multiple Data) instructions. Drop-in replacement for the standard library's `encoding/csv` package with performance improvements on AMD64 processors with AVX-512 support.
+
+SIMD-accelerated CSV parser for Go - Drop-in replacement for `encoding/csv` with AVX-512 optimization.
+
+> **Experimental**: Requires Go 1.26+ with `GOEXPERIMENT=simd`. The SIMD API is unstable and may change　now. Not recommended for production use.
+
+## Quick Start
+
+```go
+import csv "github.com/nnnkkk7/go-simdcsv"
+
+reader := csv.NewReader(strings.NewReader("name,age\nAlice,30\nBob,25"))
+records, _ := reader.ReadAll()
+// [[name age] [Alice 30] [Bob 25]]
+```
+
+Same API as `encoding/csv` - just change the import.
 
 ## Features
 
-- **SIMD-accelerated parsing**: Uses Go 1.26's experimental `simd/archsimd` package with 256-bit vectors (requires AVX-512BW for `ToBits()` operation)
-- **API compatible**: Drop-in replacement for `encoding/csv.Reader` and `encoding/csv.Writer`
-- **RFC 4180 compliant**: Full support for quoted fields, escaped quotes, multiline fields, and CRLF normalization
-- **Automatic fallback**: Gracefully falls back to scalar implementation on CPUs without AVX-512
-- **Zero-copy API**: `ParseBytes` function for direct byte slice parsing without io.Reader overhead
-
-## Requirements
-
-- **Go 1.26+** with `GOEXPERIMENT=simd` build tag (experimental)
-- **AMD64 architecture** (x86-64) only
-- **AVX-512 support** for SIMD acceleration (AVX512F, AVX512BW, AVX512VL required)
-
-### Limitations
-
-- **Experimental SIMD API**: The `simd/archsimd` package is experimental and AMD64-specific. A portable high-level SIMD package is planned for future Go releases.
-- **AVX-512 dependency**: Despite using 256-bit vectors (`Int8x32`), the `ToBits()` method requires AVX-512BW instruction (VPMOVB2M). This means SIMD acceleration is **not available** on:
-  - Most CI environments (GitHub Actions `ubuntu-latest`, etc.)
-  - CPUs without AVX-512 (Intel before Skylake-X, most AMD before Zen 4)
-  - Apple Silicon (ARM64)
-- **Memory**: Currently reads entire input into memory (streaming I/O planned)
-
-> **Note**: On unsupported CPUs, the library automatically falls back to a scalar implementation with no SIMD acceleration.
+| Feature | Description |
+|---------|-------------|
+| **API Compatible** | Drop-in replacement for `encoding/csv.Reader` and `Writer` |
+| **RFC 4180** | Quoted fields, escaped quotes (`""`), multiline fields, CRLF normalization |
+| **Auto Fallback** | Gracefully falls back to scalar on non-AVX-512 CPUs |
+| **Direct Byte API** | `ParseBytes()` and `ParseBytesStreaming()` for `[]byte` input |
 
 ## Installation
 
@@ -37,132 +39,74 @@ go get github.com/nnnkkk7/go-simdcsv
 
 ## Usage
 
-### Basic Reading (Drop-in Replacement)
+### Basic Reading
 
 ```go
-package main
-
-import (
-    "fmt"
-    "strings"
-
-    csv "github.com/nnnkkk7/go-simdcsv"
-)
-
-func main() {
-    data := "name,age,city\nAlice,30,Tokyo\nBob,25,Osaka\n"
-    reader := csv.NewReader(strings.NewReader(data))
-
-    records, err := reader.ReadAll()
-    if err != nil {
-        panic(err)
-    }
-
-    for _, record := range records {
-        fmt.Println(record)
-    }
-}
+reader := csv.NewReader(strings.NewReader(data))
+records, err := reader.ReadAll()
 ```
 
-### Zero-Copy Parsing
-
-For maximum performance when you already have data in a byte slice:
-
-```go
-package main
-
-import (
-    "fmt"
-
-    csv "github.com/nnnkkk7/go-simdcsv"
-)
-
-func main() {
-    data := []byte("a,b,c\n1,2,3\n4,5,6\n")
-
-    records, err := csv.ParseBytes(data, ',')
-    if err != nil {
-        panic(err)
-    }
-
-    for _, record := range records {
-        fmt.Println(record)
-    }
-}
-```
-
-### Streaming API
-
-Process records one at a time with a callback:
-
-```go
-package main
-
-import (
-    "fmt"
-
-    csv "github.com/nnnkkk7/go-simdcsv"
-)
-
-func main() {
-    data := []byte("name,value\nfoo,100\nbar,200\n")
-
-    err := csv.ParseBytesStreaming(data, ',', func(record []string) error {
-        fmt.Printf("Record: %v\n", record)
-        return nil
-    })
-    if err != nil {
-        panic(err)
-    }
-}
-```
-
-### Writing CSV
-
-```go
-package main
-
-import (
-    "os"
-
-    csv "github.com/nnnkkk7/go-simdcsv"
-)
-
-func main() {
-    writer := csv.NewWriter(os.Stdout)
-
-    records := [][]string{
-        {"name", "age", "city"},
-        {"Alice", "30", "Tokyo"},
-        {"Bob", "25", "Osaka"},
-    }
-
-    writer.WriteAll(records)
-}
-```
-
-### Configuration Options
-
-The Reader supports all standard `encoding/csv` options:
+### Record-by-Record
 
 ```go
 reader := csv.NewReader(r)
-reader.Comma = ';'              // Custom field delimiter
-reader.Comment = '#'            // Comment character
-reader.FieldsPerRecord = 3      // Expected fields per record (0 = auto-detect)
-reader.LazyQuotes = true        // Allow bare quotes in unquoted fields
-reader.TrimLeadingSpace = true  // Trim leading whitespace
-reader.ReuseRecord = true       // Reuse record slice for performance
+for {
+    record, err := reader.Read()
+    if err == io.EOF {
+        break
+    }
+    // process record
+}
 ```
 
-Extended options with `NewReaderWithOptions`:
+### Direct Byte Parsing
+
+For maximum performance with `[]byte` input:
+
+```go
+records, err := csv.ParseBytes(data, ',')
+```
+
+### Streaming with Callback
+
+```go
+csv.ParseBytesStreaming(data, ',', func(record []string) error {
+    fmt.Println(record)
+    return nil
+})
+```
+
+### Writing
+
+```go
+writer := csv.NewWriter(os.Stdout)
+writer.WriteAll([][]string{
+    {"name", "age"},
+    {"Alice", "30"},
+})
+```
+
+### Configuration
+
+All standard `encoding/csv` options are supported:
+
+```go
+reader := csv.NewReader(r)
+reader.Comma = ';'              // Field delimiter (default: ',')
+reader.Comment = '#'            // Comment character
+reader.LazyQuotes = true        // Allow bare quotes
+reader.TrimLeadingSpace = true  // Trim leading whitespace
+reader.ReuseRecord = true       // Reuse slice for performance
+reader.FieldsPerRecord = 3      // Expected fields (0 = auto-detect, -1 = variable)
+```
+
+Extended options:
 
 ```go
 reader := csv.NewReaderWithOptions(r, csv.ReaderOptions{
     SkipBOM: true,  // Skip UTF-8 BOM if present
 })
 ```
-
 
 ## Architecture
 
@@ -173,32 +117,58 @@ reader := csv.NewReaderWithOptions(r, csv.ReaderOptions{
 └─────────────┘     └──────────────┘     └──────────────┘     └──────────────┘
 ```
 
-1. **`scanBuffer()`**: Scans input in 64-byte chunks using 256-bit SIMD vectors (`archsimd.Int8x32`). Detects positions of structural characters (`"`, `,`, `\n`, `\r`) and outputs bitmasks. Handles CRLF normalization and tracks quote state across chunk boundaries.
+| Stage | Function | Description |
+|-------|----------|-------------|
+| **Scan** | `scanBuffer()` | SIMD scanning in 64-byte chunks. Detects `"`, `,`, `\n`, `\r` positions as bitmasks. Handles CRLF and quote state across boundaries. |
+| **Parse** | `parseBuffer()` | Iterates bitmasks to find field boundaries. Outputs `fieldInfo` (offset, length) and `rowInfo` (field count). |
+| **Build** | `buildRecords()` | Extracts strings from positions. Applies `""` → `"` unescaping. |
 
-2. **`parseBuffer()`**: Iterates through bitmasks to determine field boundaries. Outputs `fieldInfo` (start offset, length) and `rowInfo` (field count per row). Correctly handles quoted fields containing commas or newlines.
+## Requirements
 
-3. **`buildRecords()`**: Extracts strings from byte positions. Applies double-quote unescaping (`""` → `"`) for fields that were marked during scanning.
+| Requirement | Details |
+|-------------|---------|
+| **Go** | 1.26+ with `GOEXPERIMENT=simd` |
+| **Architecture** | AMD64 (x86-64) only |
+| **SIMD Acceleration** | AVX-512 (F, BW, VL) required |
 
-## Building and Testing
+### Without AVX-512
 
-### AMD64 Environment
+The library **still works** but falls back to scalar implementation (no speedup). This includes:
+- Most CI environments (GitHub Actions `ubuntu-latest`, etc.)
+- Intel CPUs before Skylake-X
+- AMD CPUs before Zen 4
+- Apple Silicon (ARM64)
+
+## Building & Testing
 
 ```bash
-# Build with SIMD support
+# Build
 GOEXPERIMENT=simd go build ./...
 
-# Run tests
+# Test
 GOEXPERIMENT=simd go test -v ./...
 
-# Run benchmarks
+# Benchmark
 GOEXPERIMENT=simd go test -bench=. -benchmem
 ```
 
 ## Performance
 
-Benchmarks comparing `go-simdcsv` against `encoding/csv` (run on AMD64 with AVX-512):
+Benchmarks comparing `go-simdcsv` against `encoding/csv`:
 
-TODO: Add benchmark results here.
+| Benchmark | encoding/csv | go-simdcsv | Speedup |
+|-----------|--------------|------------|---------|
+| Small (1KB) | - | - | - |
+| Medium (100KB) | - | - | - |
+| Large (10MB) | - | - | - |
+
+> TODO: Add benchmark results from AVX-512 environment.
+
+## Known Limitations
+
+- **Experimental API**: `simd/archsimd` may have breaking changes in future Go releases
+- **Memory**: Reads entire input into memory (streaming I/O planned for future)
+- **Custom delimiters**: Some edge cases with non-comma delimiters may differ from `encoding/csv`
 
 ## Contributing
 
@@ -207,9 +177,3 @@ Contributions are welcome! Please open issues or pull requests on GitHub.
 ## License
 
 MIT License - see [LICENSE](LICENSE) file for details.
-
-## Known Issues
-
-- **CI environments**: Most CI runners (GitHub Actions, etc.) do not have AVX-512 support. Tests pass using the scalar fallback, but SIMD acceleration is not tested in CI.
-- **Apple Silicon**: Not supported. This library is AMD64-specific.
-- **Go SIMD API stability**: The `simd/archsimd` package is experimental. Future Go releases may introduce breaking changes.
