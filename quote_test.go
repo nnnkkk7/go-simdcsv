@@ -316,19 +316,19 @@ func TestFindClosingQuote_LargeInput(t *testing.T) {
 			name:  "long field with quote at end",
 			input: []byte(`"` + strings.Repeat("a", 50) + `"`),
 			start: 1,
-			want:  51, // index 0: ", indices 1-50: 50 a's, index 51: "
+			want:  51,
 		},
 		{
 			name:  "long field with escaped quote in middle",
 			input: []byte(`"` + strings.Repeat("a", 20) + `""` + strings.Repeat("b", 20) + `"`),
 			start: 1,
-			want:  43, // 1 + 20 + 2 + 20 = 43
+			want:  43,
 		},
 		{
 			name:  "long field with multiple escaped quotes",
 			input: []byte(`"` + strings.Repeat("a", 10) + `""` + strings.Repeat("b", 10) + `""` + strings.Repeat("c", 10) + `"`),
 			start: 1,
-			want:  35, // 1 + 10 + 2 + 10 + 2 + 10 = 35
+			want:  35,
 		},
 		{
 			name:  "long field no closing quote",
@@ -340,13 +340,13 @@ func TestFindClosingQuote_LargeInput(t *testing.T) {
 			name:  "escaped quote at chunk boundary (pos 31-32)",
 			input: []byte(`"` + strings.Repeat("a", 30) + `""` + strings.Repeat("b", 10) + `"`),
 			start: 1,
-			want:  43, // 1 + 30 + 2 + 10 = 43
+			want:  43,
 		},
 		{
 			name:  "quote at exactly position 32",
 			input: []byte(`"` + strings.Repeat("a", 31) + `"`),
 			start: 1,
-			want:  32, // index 0: ", indices 1-31: 31 a's, index 32: "
+			want:  32,
 		},
 	}
 
