@@ -193,24 +193,6 @@ The parser uses a 2-stage pipeline:
 
 ## Building and Testing
 
-### Local Development (Apple Silicon / Non-AMD64)
-
-For local development on non-AMD64 machines, use Docker:
-
-```bash
-# Run tests
-make docker-test
-
-# Run benchmarks
-make docker-bench
-
-# Run linter
-make docker-lint
-
-# Generate coverage report
-make docker-coverage
-```
-
 ### AMD64 Environment
 
 ```bash
