@@ -6,6 +6,12 @@
 - docs: update readme by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/21
 - docs: update readme by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/22
 
+## [v0.0.6](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.5...v0.0.6) - 2026-01-25
+- feat: implement SIMD-accelerated unescaping and quote handling by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/18
+- docs: update readme by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/20
+- docs: update readme by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/21
+- docs: update readme by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/22
+
 ## [v0.0.5](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.4...v0.0.5) - 2026-01-23
 - ci: fix goreleaser mode by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/11
 - test: remove and integrate test by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/13
