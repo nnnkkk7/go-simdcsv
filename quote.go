@@ -46,8 +46,8 @@ func isQuotedFieldStart(data []byte, trimLeadingSpace bool) (bool, int) {
 // Dispatches to SIMD or scalar implementation based on CPU support and data size.
 func findClosingQuote(data []byte, startAfterOpenQuote int) int {
 	remaining := len(data) - startAfterOpenQuote
-	// Use SIMD for data >= 32 bytes, otherwise scalar is faster
-	if useAVX512 && remaining >= 32 {
+	// Use SIMD for data >= simdMinThreshold bytes, otherwise scalar is faster
+	if useAVX512 && remaining >= simdMinThreshold {
 		return findClosingQuoteSIMD(data, startAfterOpenQuote)
 	}
 	return findClosingQuoteScalar(data, startAfterOpenQuote)
@@ -72,14 +72,14 @@ func findClosingQuoteScalar(data []byte, startAfterOpenQuote int) int {
 }
 
 // findClosingQuoteSIMD uses SIMD to find the closing quote.
-// It searches for quote characters in 32-byte chunks using AVX-512.
+// It searches for quote characters in simdHalfChunk-byte chunks using AVX-512.
 func findClosingQuoteSIMD(data []byte, startAfterOpenQuote int) int {
 	quoteCmp := archsimd.BroadcastInt8x32('"')
 	i := startAfterOpenQuote
 
-	// Process 32-byte chunks
-	for i+32 <= len(data) {
-		chunk := archsimd.LoadInt8x32((*[32]int8)(unsafe.Pointer(&data[i])))
+	// Process simdHalfChunk-byte chunks
+	for i+simdHalfChunk <= len(data) {
+		chunk := archsimd.LoadInt8x32((*[simdHalfChunk]int8)(unsafe.Pointer(&data[i])))
 		mask := chunk.Equal(quoteCmp).ToBits()
 
 		if mask != 0 {
@@ -94,12 +94,15 @@ func findClosingQuoteSIMD(data []byte, startAfterOpenQuote int) int {
 					// This is an escaped quote, skip both quotes
 					// Clear this bit and the next (if in same chunk)
 					mask &= ^(uint32(1) << pos)
-					if pos+1 < 32 {
+					if pos+1 < simdHalfChunk {
 						mask &= ^(uint32(1) << (pos + 1))
 					}
-					// If next quote is in the next chunk, we need to skip it
-					if pos == 31 {
-						i += 32
+					// If next quote is in the next chunk, we need to skip it.
+					// Using goto here for performance: it allows us to skip the normal
+					// i += simdHalfChunk increment and immediately continue with the
+					// already-adjusted i value after handling boundary double quotes.
+					if pos == simdHalfChunk-1 {
+						i += simdHalfChunk
 						// Skip the first quote of the next iteration
 						if i < len(data) && data[i] == '"' {
 							i++
@@ -112,7 +115,7 @@ func findClosingQuoteSIMD(data []byte, startAfterOpenQuote int) int {
 				return absPos
 			}
 		}
-		i += 32
+		i += simdHalfChunk
 	continueLoop:
 	}
 
@@ -127,6 +130,5 @@ func extractQuotedContent(data []byte, closingQuoteIdx int) string {
 	if closingQuoteIdx <= 1 {
 		return ""
 	}
-	content := string(data[1:closingQuoteIdx])
-	return content
+	return string(data[1:closingQuoteIdx])
 }

@@ -14,7 +14,7 @@ var (
 	ErrFieldCount = errors.New("wrong number of fields")
 )
 
-// ParseError represents a parsing error with location information
+// ParseError represents a parsing error with location information.
 type ParseError struct {
 	StartLine int   // Record start line
 	Line      int   // Error line

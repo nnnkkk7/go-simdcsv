@@ -59,9 +59,8 @@ func parseBuffer(buf []byte, sr *scanResult) *parseResult {
 	}
 
 	// Initialize result with estimated capacities
-	// Assume average field length of 10 bytes and row length of 50 bytes
-	estimatedFields := len(buf) / 10
-	estimatedRows := len(buf) / 50
+	estimatedFields := len(buf) / avgFieldLenEstimate
+	estimatedRows := len(buf) / avgRowLenEstimate
 	result := newParseResult(estimatedFields, estimatedRows)
 
 	// Initialize state with lastSeparatorOrDelimiter = -1
@@ -74,7 +73,7 @@ func parseBuffer(buf []byte, sr *scanResult) *parseResult {
 
 	// Loop through all chunks, calling processChunkMasks for each
 	for chunkIdx := 0; chunkIdx < sr.chunkCount; chunkIdx++ {
-		offset := uint64(chunkIdx * 64)
+		offset := uint64(chunkIdx * simdChunkSize)
 		sepMask := sr.separatorMasks[chunkIdx]
 		nlMask := sr.newlineMasks[chunkIdx]
 
@@ -258,8 +257,8 @@ func finalizeLastField(buf []byte, state *parserState, result *parseResult, curr
 // unescapeDoubleQuotes converts double quotes ("") to single quotes (").
 // Dispatches to SIMD or scalar implementation based on CPU support and string size.
 func unescapeDoubleQuotes(s string) string {
-	// Use SIMD for strings >= 32 bytes
-	if useAVX512 && len(s) >= 32 {
+	// Use SIMD for strings >= simdMinThreshold bytes
+	if useAVX512 && len(s) >= simdMinThreshold {
 		return unescapeDoubleQuotesSIMD(s)
 	}
 	return unescapeDoubleQuotesScalar(s)
@@ -379,7 +378,7 @@ func postProcessFields(buf []byte, result *parseResult, postProcChunks []int) {
 
 	// For each chunk that needs post-processing, find overlapping fields
 	for _, chunkIdx := range postProcChunks {
-		chunkStart := uint64(chunkIdx * 64)
+		chunkStart := uint64(chunkIdx * simdChunkSize)
 		chunkEnd := chunkStart + 64
 
 		// Search for fields that start within this chunk range

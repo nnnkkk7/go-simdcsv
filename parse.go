@@ -3,20 +3,20 @@
 package simdcsv
 
 // ParseBytes parses a byte slice directly (zero-copy).
-// This function runs Stage 1 and Stage 2 processing and returns all records.
+// This function runs scanBuffer and parseBuffer processing and returns all records.
 func ParseBytes(data []byte, comma rune) ([][]string, error) {
 	if len(data) == 0 {
 		return nil, nil
 	}
 
-	// Stage 1: Structural analysis using SIMD (generates bitmasks)
+	// Scan: Structural analysis using SIMD (generates bitmasks)
 	separatorChar := byte(comma)
 	sr := scanBuffer(data, separatorChar)
 
-	// Stage 2: Extract fields and rows from scan result
+	// Parse: Extract fields and rows from scan result
 	pr := parseBuffer(data, sr)
 
-	// Stage 3: Convert parseResult to [][]string
+	// Build: Convert parseResult to [][]string
 	return buildRecords(data, pr), nil
 }
 
@@ -28,18 +28,18 @@ func ParseBytesStreaming(data []byte, comma rune, callback func([]string) error)
 		return nil
 	}
 
-	// Stage 1: Structural analysis using SIMD (generates bitmasks)
+	// Scan: Structural analysis using SIMD (generates bitmasks)
 	separatorChar := byte(comma)
 	sr := scanBuffer(data, separatorChar)
 
-	// Stage 2: Extract fields and rows from scan result
+	// Parse: Extract fields and rows from scan result
 	pr := parseBuffer(data, sr)
 
 	if pr == nil || len(pr.rows) == 0 {
 		return nil
 	}
 
-	// Stage 3: Invoke callback for each record
+	// Build: Invoke callback for each record
 	for _, row := range pr.rows {
 		record := buildRecord(data, pr, row)
 		if err := callback(record); err != nil {

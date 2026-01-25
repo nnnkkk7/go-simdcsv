@@ -77,6 +77,8 @@ func (r *Reader) validateUnquotedField(raw []byte, rawStart uint64, lineNum int)
 }
 
 // isFieldTerminator checks if a byte is a valid field terminator.
+// Note: Comma (',') is always considered a terminator for backward compatibility,
+// even when a different separator is configured.
 func isFieldTerminator(b byte, comma rune) bool {
 	return b == ',' || b == '\n' || b == '\r' || b == byte(comma)
 }

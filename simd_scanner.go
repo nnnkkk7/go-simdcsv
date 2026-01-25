@@ -47,6 +47,24 @@ import (
 //   - AVX512VL: 128/256-bit vector support with AVX-512 instructions
 var useAVX512 bool
 
+// SIMD processing constants
+const (
+	// simdChunkSize is the number of bytes processed per SIMD iteration (AVX-512 = 64 bytes).
+	simdChunkSize = 64
+
+	// simdHalfChunk is the size of a half SIMD chunk (AVX2/half AVX-512 = 32 bytes).
+	simdHalfChunk = 32
+
+	// simdMinThreshold is the minimum data size for SIMD optimization to be beneficial.
+	simdMinThreshold = 32
+
+	// avgFieldLenEstimate is the estimated average field length for capacity pre-allocation.
+	avgFieldLenEstimate = 10
+
+	// avgRowLenEstimate is the estimated average row length for capacity pre-allocation.
+	avgRowLenEstimate = 50
+)
+
 func init() {
 	// NOTE: Using golang.org/x/sys/cpu for runtime CPU feature detection.
 	// The archsimd package itself does not provide CPU detection functions (as of Go 1.26).
@@ -57,7 +75,6 @@ func init() {
 type scanState struct {
 	quoted        uint64 // Quote state flag (0=outside, ^0=inside)
 	skipNextQuote bool   // Skip quote at next chunk start (for boundary double quotes)
-	prevEndedCR   bool   // Previous chunk ended with CR (for boundary CRLF)
 }
 
 // scanResult represents the result of SIMD scanning (bitmasks for structural characters)
@@ -71,9 +88,9 @@ type scanResult struct {
 	lastChunkBits  int      // Valid bits in last chunk (if < 64)
 }
 
-// generateMasks generates 4 types of masks from a 64-byte chunk.
+// generateMasks generates 4 types of masks from a simdChunkSize-byte chunk.
 // It detects positions of quote ("), separator, carriage return (\r), and newline (\n).
-// Precondition: data is at least 64 bytes.
+// Precondition: data is at least simdChunkSize bytes.
 //
 // NOTE: This function dispatches to AVX-512 or scalar implementation based on the
 // useAVX512 flag. In environments without AVX-512 support (CI, older CPUs), it falls
@@ -86,7 +103,7 @@ func generateMasks(data []byte, separator byte) (quote, sep, cr, nl uint64) {
 }
 
 // generateMasksAVX512 generates masks using AVX-512 SIMD instructions.
-// Precondition: data is at least 64 bytes.
+// Precondition: data is at least simdChunkSize bytes.
 //
 // NOTE: This implementation uses archsimd.Int8x32.Equal().ToBits().
 // ToBits() internally generates the VPMOVB2M instruction (requires AVX-512BW),
@@ -102,16 +119,16 @@ func generateMasksAVX512(data []byte, separator byte) (quote, sep, cr, nl uint64
 	crCmp := archsimd.BroadcastInt8x32('\r')
 	nlCmp := archsimd.BroadcastInt8x32('\n')
 
-	// Process low 32 bytes (positions 0-31)
-	// Precondition: data is at least 64 bytes (guaranteed by caller)
-	low := archsimd.LoadInt8x32((*[32]int8)(unsafe.Pointer(&data[0])))
+	// Process low simdHalfChunk bytes (positions 0-31)
+	// Precondition: data is at least simdChunkSize bytes (guaranteed by caller)
+	low := archsimd.LoadInt8x32((*[simdHalfChunk]int8)(unsafe.Pointer(&data[0])))
 	quoteLowMask := low.Equal(quoteCmp).ToBits()
 	sepLowMask := low.Equal(sepCmp).ToBits()
 	crLowMask := low.Equal(crCmp).ToBits()
 	nlLowMask := low.Equal(nlCmp).ToBits()
 
-	// Process high 32 bytes (positions 32-63)
-	high := archsimd.LoadInt8x32((*[32]int8)(unsafe.Pointer(&data[32])))
+	// Process high simdHalfChunk bytes (positions 32-63)
+	high := archsimd.LoadInt8x32((*[simdHalfChunk]int8)(unsafe.Pointer(&data[simdHalfChunk])))
 	quoteHighMask := high.Equal(quoteCmp).ToBits()
 	sepHighMask := high.Equal(sepCmp).ToBits()
 	crHighMask := high.Equal(crCmp).ToBits()
@@ -128,9 +145,9 @@ func generateMasksAVX512(data []byte, separator byte) (quote, sep, cr, nl uint64
 
 // generateMasksScalar generates masks using scalar (non-SIMD) operations.
 // This is the fallback implementation for CPUs without AVX-512 support.
-// Precondition: data is at least 64 bytes.
+// Precondition: data is at least simdChunkSize bytes.
 func generateMasksScalar(data []byte, separator byte) (quote, sep, cr, nl uint64) {
-	for i := 0; i < 64; i++ {
+	for i := 0; i < simdChunkSize; i++ {
 		b := data[i]
 		bit := uint64(1) << i
 		if b == '"' {
@@ -149,8 +166,8 @@ func generateMasksScalar(data []byte, separator byte) (quote, sep, cr, nl uint64
 	return
 }
 
-// generateMasksPadded processes chunks smaller than 64 bytes.
-// It copies data to a 64-byte buffer (stack allocated), generates masks,
+// generateMasksPadded processes chunks smaller than simdChunkSize bytes.
+// It copies data to a simdChunkSize-byte buffer (stack allocated), generates masks,
 // then masks off invalid bits beyond the actual data length.
 // Returns masks only for valid bytes (remaining bits are 0).
 func generateMasksPadded(data []byte, separator byte) (quote, sep, cr, nl uint64, validBits int) {
@@ -159,8 +176,8 @@ func generateMasksPadded(data []byte, separator byte) (quote, sep, cr, nl uint64
 		return 0, 0, 0, 0, 0
 	}
 
-	// Create a 64-byte padded buffer on the stack
-	var padded [64]byte
+	// Create a simdChunkSize-byte padded buffer on the stack
+	var padded [simdChunkSize]byte
 	copy(padded[:], data)
 	// Remaining bytes are zero (won't match any structural characters)
 
@@ -168,7 +185,7 @@ func generateMasksPadded(data []byte, separator byte) (quote, sep, cr, nl uint64
 	quote, sep, cr, nl = generateMasks(padded[:], separator)
 
 	// Mask off bits beyond valid data
-	if validBits < 64 {
+	if validBits < simdChunkSize {
 		mask := (uint64(1) << validBits) - 1
 		quote &= mask
 		sep &= mask
@@ -205,15 +222,32 @@ func processQuotesAndSeparators(quoteMask, sepMask, newlineMask, nextQuoteMask u
 		nlPos := bits.TrailingZeros64(workNewlineMask)
 
 		minPos := minOfThree(quotePos, sepPos, nlPos)
-		if minPos >= 64 {
+		if minPos >= simdChunkSize {
 			break
 		}
 
 		switch minPos {
 		case quotePos:
-			quoteMaskOut, hasDoubleQuote, boundaryDoubleQuote, quoted, workQuoteMask = processQuote(
-				quotePos, quoted, workQuoteMask, quoteMaskOut, nextQuoteMask, hasDoubleQuote, boundaryDoubleQuote,
-			)
+			// Process quote character (inlined for simplicity)
+			if quoted != 0 {
+				// Inside quoted region - check for escape sequences
+				if quotePos == simdChunkSize-1 && nextQuoteMask&1 != 0 {
+					// Boundary double quote
+					quoteMaskOut &= ^(uint64(1) << (simdChunkSize - 1))
+					hasDoubleQuote = true
+					boundaryDoubleQuote = true
+				} else if quotePos < simdChunkSize-1 && workQuoteMask&(uint64(1)<<(quotePos+1)) != 0 {
+					// Adjacent double quote within chunk
+					quoteMaskOut &= ^(uint64(3) << quotePos)
+					hasDoubleQuote = true
+					workQuoteMask &= ^(uint64(1) << (quotePos + 1))
+				} else {
+					quoted = 0 // Closing quote
+				}
+			} else {
+				quoted = ^uint64(0) // Opening quote
+			}
+			workQuoteMask &= ^(uint64(1) << quotePos)
 		case sepPos:
 			if quoted != 0 {
 				sepMaskOut &= ^(uint64(1) << sepPos)
@@ -239,31 +273,7 @@ func minOfThree(a, b, c int) int {
 	return c
 }
 
-// processQuote handles quote character processing and returns updated state.
-func processQuote(quotePos int, quoted, workQuoteMask, quoteMaskOut, nextQuoteMask uint64, hasDoubleQuote, boundaryDoubleQuote bool) (uint64, bool, bool, uint64, uint64) {
-	if quoted != 0 {
-		// Inside quoted region - check for escape sequences
-		if quotePos == 63 && nextQuoteMask&1 != 0 {
-			// Boundary double quote
-			quoteMaskOut &= ^(uint64(1) << 63)
-			hasDoubleQuote = true
-			boundaryDoubleQuote = true
-		} else if quotePos < 63 && workQuoteMask&(uint64(1)<<(quotePos+1)) != 0 {
-			// Adjacent double quote within chunk
-			quoteMaskOut &= ^(uint64(3) << quotePos)
-			hasDoubleQuote = true
-			workQuoteMask &= ^(uint64(1) << (quotePos + 1))
-		} else {
-			quoted = 0 // Closing quote
-		}
-	} else {
-		quoted = ^uint64(0) // Opening quote
-	}
-	workQuoteMask &= ^(uint64(1) << quotePos)
-	return quoteMaskOut, hasDoubleQuote, boundaryDoubleQuote, quoted, workQuoteMask
-}
-
-// scanBuffer processes the entire buffer in 64-byte chunks using SIMD.
+// scanBuffer processes the entire buffer in simdChunkSize-byte chunks using SIMD.
 // It generates structural character masks and handles:
 // - CRLF normalization (CRLF pairs are normalized to LF only in output)
 // - Quote state tracking across chunk boundaries
@@ -274,7 +284,7 @@ func scanBuffer(buf []byte, separatorChar byte) *scanResult {
 		return &scanResult{}
 	}
 
-	chunkCount := (len(buf) + 63) / 64
+	chunkCount := (len(buf) + simdChunkSize - 1) / simdChunkSize
 	result := &scanResult{
 		quoteMasks:     make([]uint64, 0, chunkCount),
 		separatorMasks: make([]uint64, 0, chunkCount),
@@ -286,15 +296,15 @@ func scanBuffer(buf []byte, separatorChar byte) *scanResult {
 	state := scanState{}
 
 	for chunkIdx := 0; chunkIdx < chunkCount; chunkIdx++ {
-		offset := chunkIdx * 64
+		offset := chunkIdx * simdChunkSize
 		remaining := len(buf) - offset
 
 		// Generate masks (last chunk may need padding)
 		var quoteMask, sepMask, crMask, nlMask uint64
 		var validBits int
-		if remaining >= 64 {
-			quoteMask, sepMask, crMask, nlMask = generateMasks(buf[offset:offset+64], separatorChar)
-			validBits = 64
+		if remaining >= simdChunkSize {
+			quoteMask, sepMask, crMask, nlMask = generateMasks(buf[offset:offset+simdChunkSize], separatorChar)
+			validBits = simdChunkSize
 		} else {
 			quoteMask, sepMask, crMask, nlMask, validBits = generateMasksPadded(buf[offset:], separatorChar)
 			result.lastChunkBits = validBits
@@ -302,12 +312,12 @@ func scanBuffer(buf []byte, separatorChar byte) *scanResult {
 
 		// Lookahead to next chunk for boundary handling
 		var nextQuoteMask, nextNlMask uint64
-		if remaining > 64 {
-			nextRemaining := remaining - 64
-			if nextRemaining >= 64 {
-				nextQuoteMask, _, _, nextNlMask = generateMasks(buf[offset+64:offset+128], separatorChar)
+		if remaining > simdChunkSize {
+			nextRemaining := remaining - simdChunkSize
+			if nextRemaining >= simdChunkSize {
+				nextQuoteMask, _, _, nextNlMask = generateMasks(buf[offset+simdChunkSize:offset+2*simdChunkSize], separatorChar)
 			} else {
-				nextQuoteMask, _, _, nextNlMask, _ = generateMasksPadded(buf[offset+64:], separatorChar)
+				nextQuoteMask, _, _, nextNlMask, _ = generateMasksPadded(buf[offset+simdChunkSize:], separatorChar)
 			}
 		}
 
@@ -318,12 +328,6 @@ func scanBuffer(buf []byte, separatorChar byte) *scanResult {
 			quoteMask &= ^uint64(1) // Skip the first quote
 		}
 		state.skipNextQuote = false
-
-		// Handle boundary CRLF from previous chunk
-		// If previous chunk ended with CR and this chunk starts with LF,
-		// the CR was already excluded from previous chunk's newline mask
-		// and we keep this LF as the record delimiter (no action needed)
-		state.prevEndedCR = false
 
 		// CRLF normalization:
 		// For CRLF pairs within this chunk, we want only the LF to appear in newlineMask
@@ -339,12 +343,11 @@ func scanBuffer(buf []byte, separatorChar byte) *scanResult {
 		newlineMaskOut |= isolatedCRs
 
 		// Handle CR at position 63 (may be part of boundary CRLF)
-		if validBits == 64 && crMask&(1<<63) != 0 {
+		if validBits == simdChunkSize && crMask&(1<<63) != 0 {
 			if nextNlMask&1 != 0 {
 				// Boundary CRLF: CR at 63, LF at next chunk's 0
 				// Remove this CR from newline mask (next chunk's LF will be the delimiter)
 				newlineMaskOut &= ^(uint64(1) << 63)
-				state.prevEndedCR = true
 			} else {
 				// Isolated CR at position 63: treat as newline
 				newlineMaskOut |= uint64(1) << 63

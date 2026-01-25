@@ -59,16 +59,20 @@ type Reader struct {
 	lastRecord     []string
 
 	// SIMD processing state
-	scanResult         *scanResult  // Scan result (structural character masks)
-	parseResult        *parseResult // Parse result (extracted fields/rows)
-	currentRecordIndex int          // Current record index in parseResult.rows
-	initialized        bool         // Whether scan/parse have been run
+	scanResult            *scanResult  // Scan result (structural character masks)
+	parseResult           *parseResult // Parse result (extracted fields/rows)
+	currentRecordIndex    int          // Current record index in parseResult.rows
+	nonCommentRecordCount int          // Count of non-comment records returned (for O(1) first record detection)
+	initialized           bool         // Whether scan/parse have been run
 
 	// Extended options (set via NewReaderWithOptions)
-	skipBOM    bool // Skip UTF-8 BOM if present
-	bufferSize int  // Buffer size hint (reserved for future use)
-	chunkSize  int  // Chunk size hint (reserved for future use)
-	zeroCopy   bool // Zero-copy mode hint (reserved for future use)
+	skipBOM bool // Skip UTF-8 BOM if present
+
+	// Reserved fields for future streaming/chunked processing implementation.
+	// These fields are accepted by NewReaderWithOptions but currently have no effect.
+	bufferSize int  // Buffer size hint (not yet implemented)
+	chunkSize  int  // Chunk size hint (not yet implemented)
+	zeroCopy   bool // Zero-copy mode hint (not yet implemented)
 }
 
 // position represents a position in the input.
@@ -95,7 +99,7 @@ func NewReader(r io.Reader) *Reader {
 // If ReuseRecord is true, the returned slice may be shared
 // between multiple calls to Read.
 func (r *Reader) Read() (record []string, err error) {
-	// Initialize on first call: read all input and run Stage 1 + Stage 2
+	// Initialize on first call: read all input and run scanBuffer + parseBuffer
 	if !r.initialized {
 		if err := r.initialize(); err != nil {
 			return nil, err
@@ -108,18 +112,19 @@ func (r *Reader) Read() (record []string, err error) {
 			return nil, io.EOF
 		}
 
-		// Get current row info
-		rowInfo := r.parseResult.rows[r.currentRecordIndex]
+		// Get current row info and index
+		rowIdx := r.currentRecordIndex
+		rowInfo := r.parseResult.rows[rowIdx]
 		r.currentRecordIndex++
 
 		// Check for comment line (line starting with Comment character)
-		if r.Comment != 0 && r.isCommentLine(rowInfo) {
+		if r.Comment != 0 && r.isCommentLine(rowInfo, rowIdx) {
 			// Skip this line and continue to next
 			continue
 		}
 
 		// Build record from fields with validation
-		record, err = r.buildRecordWithValidation(rowInfo)
+		record, err = r.buildRecordWithValidation(rowInfo, rowIdx)
 		if err != nil {
 			return record, err
 		}
@@ -152,24 +157,19 @@ func (r *Reader) Read() (record []string, err error) {
 		}
 		// If FieldsPerRecord < 0, no check is performed
 
+		r.nonCommentRecordCount++
 		return record, nil
 	}
 }
 
-// isFirstNonCommentRecord checks if this is the first non-comment record being returned
+// isFirstNonCommentRecord checks if this is the first non-comment record being returned.
+// Uses O(1) counter instead of O(n) re-scanning.
 func (r *Reader) isFirstNonCommentRecord() bool {
-	// Count how many non-comment records we've processed
-	nonCommentCount := 0
-	for i := 0; i < r.currentRecordIndex; i++ {
-		if i < len(r.parseResult.rows) && !r.isCommentLine(r.parseResult.rows[i]) {
-			nonCommentCount++
-		}
-	}
-	return nonCommentCount == 1
+	return r.nonCommentRecordCount == 0
 }
 
 // isCommentLine checks if a row is a comment line
-func (r *Reader) isCommentLine(row rowInfo) bool {
+func (r *Reader) isCommentLine(row rowInfo, rowIdx int) bool {
 	if r.Comment == 0 || row.fieldCount == 0 {
 		return false
 	}
@@ -186,15 +186,16 @@ func (r *Reader) isCommentLine(row rowInfo) bool {
 		return false
 	}
 	// Get the raw start position (the original field start in rawBuffer)
-	rawStart := r.getRawFieldStart(row, firstFieldIdx)
+	rawStart := r.getRawFieldStart(row, rowIdx, firstFieldIdx)
 	if rawStart < uint64(len(r.rawBuffer)) {
 		return r.rawBuffer[rawStart] == byte(r.Comment)
 	}
 	return false
 }
 
-// getRawFieldStart gets the original field start position before quote adjustment
-func (r *Reader) getRawFieldStart(row rowInfo, fieldIdx int) uint64 {
+// getRawFieldStart gets the original field start position before quote adjustment.
+// Uses O(1) lookup with rowIdx instead of O(n) search.
+func (r *Reader) getRawFieldStart(row rowInfo, rowIdx, fieldIdx int) uint64 {
 	// For the first field of a row, we need to find the actual start
 	// which is either:
 	// - 0 for the first row
@@ -208,15 +209,8 @@ func (r *Reader) getRawFieldStart(row rowInfo, fieldIdx int) uint64 {
 	// If quoteAdjust was applied, start is field.start - 1
 	// But for comment detection, we need the actual line start
 	// We can find it by looking at the previous row's end position
-	prevRowIdx := -1
-	for i, r := range r.parseResult.rows {
-		if r.firstField == row.firstField {
-			prevRowIdx = i - 1
-			break
-		}
-	}
-	if prevRowIdx >= 0 {
-		prevRow := r.parseResult.rows[prevRowIdx]
+	if rowIdx > 0 {
+		prevRow := r.parseResult.rows[rowIdx-1]
 		lastFieldIdx := prevRow.firstField + prevRow.fieldCount - 1
 		if lastFieldIdx >= 0 && lastFieldIdx < len(r.parseResult.fields) {
 			lastField := r.parseResult.fields[lastFieldIdx]
@@ -227,7 +221,7 @@ func (r *Reader) getRawFieldStart(row rowInfo, fieldIdx int) uint64 {
 	return field.start
 }
 
-// initialize reads all input and runs Stage 1 and Stage 2 processing.
+// initialize reads all input and runs scanBuffer and parseBuffer processing.
 func (r *Reader) initialize() error {
 	r.initialized = true
 
@@ -269,7 +263,7 @@ func (r *Reader) initialize() error {
 }
 
 // buildRecordWithValidation constructs a []string record from a rowInfo with quote validation
-func (r *Reader) buildRecordWithValidation(row rowInfo) ([]string, error) {
+func (r *Reader) buildRecordWithValidation(row rowInfo, rowIdx int) ([]string, error) {
 	fieldCount := row.fieldCount
 	record := r.allocateRecord(fieldCount)
 
@@ -283,7 +277,7 @@ func (r *Reader) buildRecordWithValidation(row rowInfo) ([]string, error) {
 		field := r.parseResult.fields[fieldIdx]
 
 		// Get raw field data for validation
-		rawStart, rawEnd := r.getFieldRawBounds(row, fieldIdx, i)
+		rawStart, rawEnd := r.getFieldRawBounds(row, rowIdx, fieldIdx, i)
 
 		// Validate quotes unless LazyQuotes is enabled
 		if !r.LazyQuotes {
@@ -306,7 +300,7 @@ func (r *Reader) buildRecordWithValidation(row rowInfo) ([]string, error) {
 }
 
 // getFieldRawBounds returns the raw start and end positions for a field in the buffer
-func (r *Reader) getFieldRawBounds(row rowInfo, fieldIdx, fieldNum int) (uint64, uint64) {
+func (r *Reader) getFieldRawBounds(row rowInfo, rowIdx, fieldIdx, fieldNum int) (uint64, uint64) {
 	field := r.parseResult.fields[fieldIdx]
 
 	// Calculate raw start (before any quote adjustment)
@@ -317,7 +311,7 @@ func (r *Reader) getFieldRawBounds(row rowInfo, fieldIdx, fieldNum int) (uint64,
 			rawStart = 0
 		} else {
 			// Find the position after the previous newline
-			rawStart = r.findLineStart(row)
+			rawStart = r.findLineStart(rowIdx)
 		}
 	} else {
 		// For non-first fields, find the position after the previous separator
@@ -384,17 +378,9 @@ func (r *Reader) findRawFieldEnd(start uint64, isLastField bool) uint64 {
 	return bufLen
 }
 
-// findLineStart finds the start position of a line
-func (r *Reader) findLineStart(row rowInfo) uint64 {
-	// Find the row index
-	rowIdx := -1
-	for i, ri := range r.parseResult.rows {
-		if ri.firstField == row.firstField && ri.lineNum == row.lineNum {
-			rowIdx = i
-			break
-		}
-	}
-
+// findLineStart finds the start position of a line.
+// Uses O(1) lookup with rowIdx instead of O(n) search.
+func (r *Reader) findLineStart(rowIdx int) uint64 {
 	if rowIdx <= 0 {
 		return 0
 	}
@@ -517,10 +503,20 @@ func (r *Reader) InputOffset() int64 {
 
 // ReaderOptions contains extended configuration options for [Reader].
 type ReaderOptions struct {
-	BufferSize int  // BufferSize specifies the internal buffer size in bytes. Default is 64KB.
-	ChunkSize  int  // Parallel processing chunk size
-	ZeroCopy   bool // Zero-copy optimization (default: false)
-	SkipBOM    bool // Skip UTF-8 BOM (default: false)
+	// SkipBOM skips UTF-8 BOM (EF BB BF) at the beginning of input if present.
+	SkipBOM bool
+
+	// BufferSize specifies the internal buffer size hint in bytes.
+	// NOTE: Not yet implemented; reserved for future streaming support.
+	BufferSize int
+
+	// ChunkSize specifies the parallel processing chunk size.
+	// NOTE: Not yet implemented; reserved for future streaming support.
+	ChunkSize int
+
+	// ZeroCopy enables zero-copy optimization.
+	// NOTE: Not yet implemented; reserved for future optimization.
+	ZeroCopy bool
 }
 
 // NewReaderWithOptions creates a Reader with extended options.
