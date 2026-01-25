@@ -8,7 +8,7 @@
 
 SIMD-accelerated CSV parser for Go - Drop-in replacement for `encoding/csv` with AVX-512 optimization.
 
-> **Experimental**: Requires Go 1.26+ with `GOEXPERIMENT=simd`. The SIMD API is unstable and may change　now. Not recommended for production use.
+> **Experimental**: Requires Go 1.26+ with `GOEXPERIMENT=simd`. The SIMD API is unstable and may change now. Not recommended for production use.
 
 ## Quick Start
 
