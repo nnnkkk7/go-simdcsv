@@ -284,7 +284,7 @@ func unescapeDoubleQuotesSIMD(s string) string {
 	i := 0
 	for i+32 <= len(data) {
 		chunk := archsimd.LoadInt8x32((*[32]int8)(unsafe.Pointer(&data[i])))
-		mask := uint32(chunk.Equal(quoteCmp).ToBits())
+		mask := chunk.Equal(quoteCmp).ToBits()
 
 		if mask != 0 {
 			// Check if any quotes are followed by another quote
@@ -327,7 +327,7 @@ func unescapeDoubleQuotesSIMD(s string) string {
 	i = 0
 	for i+32 <= len(data) {
 		chunk := archsimd.LoadInt8x32((*[32]int8)(unsafe.Pointer(&data[i])))
-		mask := uint32(chunk.Equal(quoteCmp).ToBits())
+		mask := chunk.Equal(quoteCmp).ToBits()
 
 		if mask != 0 {
 			for mask != 0 {

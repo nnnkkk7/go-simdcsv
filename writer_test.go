@@ -260,9 +260,9 @@ func TestWriteQuotedField_SIMD(t *testing.T) {
 			want:  `"` + strings.Repeat("a", 20) + `""` + strings.Repeat("b", 20) + `""` + strings.Repeat("c", 20) + `"`,
 		},
 		{
-			name:  "long no quotes",
-			field: strings.Repeat("hello world ", 10),
-			want:  `"` + strings.Repeat("hello world ", 10) + `"`,
+			name:  "long no quotes to escape",
+			field: strings.Repeat("hello,world ", 10),
+			want:  `"` + strings.Repeat("hello,world ", 10) + `"`,
 		},
 		{
 			name:  "quote at chunk boundary",

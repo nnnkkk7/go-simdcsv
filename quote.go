@@ -80,7 +80,7 @@ func findClosingQuoteSIMD(data []byte, startAfterOpenQuote int) int {
 	// Process 32-byte chunks
 	for i+32 <= len(data) {
 		chunk := archsimd.LoadInt8x32((*[32]int8)(unsafe.Pointer(&data[i])))
-		mask := uint32(chunk.Equal(quoteCmp).ToBits())
+		mask := chunk.Equal(quoteCmp).ToBits()
 
 		if mask != 0 {
 			// Found at least one quote in this chunk
