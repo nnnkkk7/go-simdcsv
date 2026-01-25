@@ -163,52 +163,20 @@ reader := csv.NewReaderWithOptions(r, csv.ReaderOptions{
 })
 ```
 
-## API Reference
-
-### Reader
-
-| Function/Method | Description |
-|----------------|-------------|
-| `NewReader(r io.Reader)` | Create a new CSV reader |
-| `NewReaderWithOptions(r io.Reader, opts ReaderOptions)` | Create reader with extended options |
-| `(*Reader) Read()` | Read one record |
-| `(*Reader) ReadAll()` | Read all remaining records |
-| `(*Reader) FieldPos(field int)` | Get line and column of a field |
-| `(*Reader) InputOffset()` | Get current byte offset |
-
-### Writer
-
-| Function/Method | Description |
-|----------------|-------------|
-| `NewWriter(w io.Writer)` | Create a new CSV writer |
-| `(*Writer) Write(record []string)` | Write one record |
-| `(*Writer) WriteAll(records [][]string)` | Write all records and flush |
-| `(*Writer) Flush()` | Flush buffered data |
-| `(*Writer) Error()` | Get any write error |
-
-### Direct Parsing
-
-| Function | Description |
-|----------|-------------|
-| `ParseBytes(data []byte, comma rune)` | Parse byte slice, return all records |
-| `ParseBytesStreaming(data []byte, comma rune, callback func([]string) error)` | Parse with streaming callback |
 
 ## Architecture
 
-The parser processes CSV data through three functions:
+The parser uses a 2-stage pipeline:
+
+1. **Stage 1 (SIMD Scan)**: Uses 256-bit SIMD vectors (`archsimd.Int8x32`) to generate bitmasks for structural characters (quotes, separators, newlines) in 64-byte chunks. Handles CRLF normalization and quote state tracking.
+2. **Stage 2 (Field Extraction)**: Processes bitmasks to extract field positions and build strings with proper unescaping (double quote `""` → single quote `"`).
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│  Raw Input  │ ──▶ │ scanBuffer  │ ──▶ │ parseBuffer │ ──▶ │ extractField│ ──▶ [][]string
-│  ([]byte)   │     │ (bitmasks)  │     │ (positions) │     │ (strings)   │
-└─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
+┌─────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│  Raw Input  │ ──▶ │ Stage 1 (SIMD)  │ ──▶ │ Stage 2 (Scalar)│ ──▶ [][]string
+│  (bytes)    │     │ (bitmasks)      │     │ (extraction)    │
+└─────────────┘     └─────────────────┘     └─────────────────┘
 ```
-
-1. **`scanBuffer`** (`simd_scanner.go`): Scans input in 64-byte chunks using 256-bit SIMD vectors (`archsimd.Int8x32`). Generates bitmasks indicating positions of structural characters (`,` `"` `\n` `\r`). Handles CRLF normalization and quote state tracking across chunk boundaries.
-
-2. **`parseBuffer`** (`field_parser.go`): Iterates through bitmasks to identify field and row boundaries. Records start/end positions without copying data.
-
-3. **`extractField`** (`field_parser.go`): Converts position information to strings. Applies double-quote unescaping (`""` → `"`) using SIMD for large fields.
 
 ### File Structure
 
@@ -224,6 +192,24 @@ The parser processes CSV data through three functions:
 | `errors.go` | Error types (compatible with encoding/csv) |
 
 ## Building and Testing
+
+### Local Development (Apple Silicon / Non-AMD64)
+
+For local development on non-AMD64 machines, use Docker:
+
+```bash
+# Run tests
+make docker-test
+
+# Run benchmarks
+make docker-bench
+
+# Run linter
+make docker-lint
+
+# Generate coverage report
+make docker-coverage
+```
 
 ### AMD64 Environment
 
@@ -242,15 +228,7 @@ GOEXPERIMENT=simd go test -bench=. -benchmem
 
 Benchmarks comparing `go-simdcsv` against `encoding/csv` (run on AMD64 with AVX-512):
 
-| Dataset | encoding/csv | go-simdcsv | Speedup |
-|---------|--------------|------------|---------|
-| Simple 10K rows | - | - | ~2-3x |
-| Quoted 10K rows | - | - | ~2-3x |
-| Mixed 10K rows | - | - | ~2x |
-
-> **Note**: Performance gains are only achieved on CPUs with AVX-512 support. On other CPUs, the scalar fallback provides similar performance to `encoding/csv`.
-
-> Run benchmarks on your hardware: `make docker-bench`
+TODO: Add benchmark results here.
 
 ## Contributing
 
@@ -269,10 +247,3 @@ MIT License - see [LICENSE](LICENSE) file for details.
 - **CI environments**: Most CI runners (GitHub Actions, etc.) do not have AVX-512 support. Tests pass using the scalar fallback, but SIMD acceleration is not tested in CI.
 - **Apple Silicon**: Not supported. This library is AMD64-specific.
 - **Go SIMD API stability**: The `simd/archsimd` package is experimental. Future Go releases may introduce breaking changes.
-
-## Related Projects
-
-- [encoding/csv](https://pkg.go.dev/encoding/csv) - Go standard library CSV package
-- [simdjson-go](https://github.com/minio/simdjson-go) - SIMD JSON parser for Go
-- [simdcsv](https://github.com/geofflangdale/simdcsv) - Original C++ SIMD CSV parser
-- [Go SIMD Proposal](https://github.com/golang/go/issues/73787) - The archsimd proposal for Go
