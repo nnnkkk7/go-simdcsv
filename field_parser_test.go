@@ -1277,6 +1277,10 @@ func extractFieldContent(buf []byte, f fieldInfo) string {
 // =============================================================================
 
 func TestUnescapeDoubleQuotes_SIMDvsScalar(t *testing.T) {
+	if !useAVX512 {
+		t.Skip("AVX-512 not available, skipping SIMD test")
+	}
+
 	tests := []struct {
 		name  string
 		input string
@@ -1348,11 +1352,13 @@ func TestUnescapeDoubleQuotes_LongInput(t *testing.T) {
 				t.Errorf("unescapeDoubleQuotes mismatch:\ninput len: %d\ngot len:   %d\nwant len:  %d",
 					len(tt.input), len(got), len(tt.want))
 			}
-			// Verify scalar and SIMD produce same result
+			// Verify scalar and SIMD produce same result (only if AVX-512 available)
 			scalar := unescapeDoubleQuotesScalar(tt.input)
-			simd := unescapeDoubleQuotesSIMD(tt.input)
-			if scalar != simd {
-				t.Errorf("scalar/simd mismatch:\nscalar: %q\nsimd:   %q", scalar, simd)
+			if useAVX512 {
+				simd := unescapeDoubleQuotesSIMD(tt.input)
+				if scalar != simd {
+					t.Errorf("scalar/simd mismatch:\nscalar: %q\nsimd:   %q", scalar, simd)
+				}
 			}
 		})
 	}

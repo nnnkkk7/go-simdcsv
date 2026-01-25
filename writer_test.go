@@ -168,6 +168,10 @@ func TestWrite_CRLF(t *testing.T) {
 // =============================================================================
 
 func TestFieldNeedsQuotes_SIMDvsScalar(t *testing.T) {
+	if !useAVX512 {
+		t.Skip("AVX-512 not available, skipping SIMD test")
+	}
+
 	w := NewWriter(nil)
 
 	tests := []struct {

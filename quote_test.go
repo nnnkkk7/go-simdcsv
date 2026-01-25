@@ -250,6 +250,10 @@ func TestExtractQuotedContent(t *testing.T) {
 // =============================================================================
 
 func TestFindClosingQuote_SIMDvsScalar(t *testing.T) {
+	if !useAVX512 {
+		t.Skip("AVX-512 not available, skipping SIMD test")
+	}
+
 	tests := []struct {
 		name  string
 		input []byte
@@ -353,11 +357,13 @@ func TestFindClosingQuote_LargeInput(t *testing.T) {
 				t.Errorf("findClosingQuote(%q..., %d) = %d, want %d",
 					string(tt.input[:min(30, len(tt.input))]), tt.start, got, tt.want)
 			}
-			// Also verify scalar and SIMD match
+			// Also verify scalar and SIMD match (only if AVX-512 available)
 			scalar := findClosingQuoteScalar(tt.input, tt.start)
-			simd := findClosingQuoteSIMD(tt.input, tt.start)
-			if scalar != simd {
-				t.Errorf("scalar/simd mismatch: scalar=%d, simd=%d", scalar, simd)
+			if useAVX512 {
+				simd := findClosingQuoteSIMD(tt.input, tt.start)
+				if scalar != simd {
+					t.Errorf("scalar/simd mismatch: scalar=%d, simd=%d", scalar, simd)
+				}
 			}
 		})
 	}
