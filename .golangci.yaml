@@ -130,6 +130,18 @@ linters:
         linters:
           - gci
           - gofumpt
+      - path: field_parser\.go
+        linters:
+          - gci
+          - gofumpt
+      - path: quote\.go
+        linters:
+          - gci
+          - gofumpt
+      - path: writer\.go
+        linters:
+          - gci
+          - gofumpt
 
 issues:
   # Maximum issues count per linter (0 = unlimited)

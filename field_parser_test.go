@@ -3,6 +3,7 @@
 package simdcsv
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -1269,4 +1270,172 @@ func extractFieldContent(buf []byte, f fieldInfo) string {
 		return ""
 	}
 	return string(buf[f.start : f.start+f.length])
+}
+
+// =============================================================================
+// unescapeDoubleQuotes SIMD Tests
+// =============================================================================
+
+func TestUnescapeDoubleQuotes_SIMDvsScalar(t *testing.T) {
+	if !useAVX512 {
+		t.Skip("AVX-512 not available, skipping SIMD test")
+	}
+
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"empty", ""},
+		{"no quotes", "hello world"},
+		{"single quote", `"`},
+		{"double quote", `""`},
+		{"basic escape", `He said ""Hello""`},
+		{"multiple escapes", `""A"" and ""B"" and ""C""`},
+		{"only double quotes", `""""""`},
+		{"long no quotes", strings.Repeat("abcdefgh", 20)},
+		{"long with escape at start", `""` + strings.Repeat("x", 100)},
+		{"long with escape at end", strings.Repeat("x", 100) + `""`},
+		{"long with escape in middle", strings.Repeat("x", 50) + `""` + strings.Repeat("y", 50)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scalar := unescapeDoubleQuotesScalar(tt.input)
+			// Force SIMD path even for short strings
+			simd := unescapeDoubleQuotesSIMD(tt.input)
+
+			if scalar != simd {
+				t.Errorf("unescapeDoubleQuotes mismatch:\ninput:  %q\nscalar: %q\nsimd:   %q",
+					tt.input, scalar, simd)
+			}
+		})
+	}
+}
+
+func TestUnescapeDoubleQuotes_LongInput(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "100 chars with escapes",
+			input: strings.Repeat(`a""b`, 25),
+			want:  strings.Repeat(`a"b`, 25),
+		},
+		{
+			name:  "escape at chunk boundary 31-32",
+			input: strings.Repeat("x", 31) + `""` + strings.Repeat("y", 31),
+			want:  strings.Repeat("x", 31) + `"` + strings.Repeat("y", 31),
+		},
+		{
+			name:  "escape at chunk boundary 63-64",
+			input: strings.Repeat("x", 63) + `""` + strings.Repeat("y", 32),
+			want:  strings.Repeat("x", 63) + `"` + strings.Repeat("y", 32),
+		},
+		{
+			name:  "multiple escapes across chunks",
+			input: strings.Repeat("a", 30) + `""` + strings.Repeat("b", 30) + `""` + strings.Repeat("c", 30),
+			want:  strings.Repeat("a", 30) + `"` + strings.Repeat("b", 30) + `"` + strings.Repeat("c", 30),
+		},
+		{
+			name:  "no escapes long string",
+			input: strings.Repeat("hello world ", 50),
+			want:  strings.Repeat("hello world ", 50),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := unescapeDoubleQuotes(tt.input)
+			if got != tt.want {
+				t.Errorf("unescapeDoubleQuotes mismatch:\ninput len: %d\ngot len:   %d\nwant len:  %d",
+					len(tt.input), len(got), len(tt.want))
+			}
+			// Verify scalar and SIMD produce same result (only if AVX-512 available)
+			scalar := unescapeDoubleQuotesScalar(tt.input)
+			if useAVX512 {
+				simd := unescapeDoubleQuotesSIMD(tt.input)
+				if scalar != simd {
+					t.Errorf("scalar/simd mismatch:\nscalar: %q\nsimd:   %q", scalar, simd)
+				}
+			}
+		})
+	}
+}
+
+func TestUnescapeDoubleQuotes_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "triple quote",
+			input: `"""`,
+			want:  `""`,
+		},
+		{
+			name:  "quadruple quote",
+			input: `""""`,
+			want:  `""`,
+		},
+		{
+			name:  "six quotes",
+			input: `""""""`,
+			want:  `"""`,
+		},
+		{
+			name:  "quote then content",
+			input: `""hello`,
+			want:  `"hello`,
+		},
+		{
+			name:  "content then quote",
+			input: `hello""`,
+			want:  `hello"`,
+		},
+		{
+			name:  "alternating quotes and content",
+			input: `a""b""c""d`,
+			want:  `a"b"c"d`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := unescapeDoubleQuotes(tt.input)
+			if got != tt.want {
+				t.Errorf("unescapeDoubleQuotes(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func BenchmarkUnescapeDoubleQuotes_LongNoEscape(b *testing.B) {
+	input := strings.Repeat("abcdefgh", 100)
+	for b.Loop() {
+		_ = unescapeDoubleQuotes(input)
+	}
+}
+
+func BenchmarkUnescapeDoubleQuotes_LongNoEscapeScalar(b *testing.B) {
+	input := strings.Repeat("abcdefgh", 100)
+	for b.Loop() {
+		_ = unescapeDoubleQuotesScalar(input)
+	}
+}
+
+func BenchmarkUnescapeDoubleQuotes_LongWithEscape(b *testing.B) {
+	input := strings.Repeat(`a""b`, 100)
+	for b.Loop() {
+		_ = unescapeDoubleQuotes(input)
+	}
+}
+
+func BenchmarkUnescapeDoubleQuotes_LongWithEscapeScalar(b *testing.B) {
+	input := strings.Repeat(`a""b`, 100)
+	for b.Loop() {
+		_ = unescapeDoubleQuotesScalar(input)
+	}
 }
