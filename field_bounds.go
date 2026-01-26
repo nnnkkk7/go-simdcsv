@@ -32,7 +32,7 @@ func (r *Reader) isCommentLine(row rowInfo, _ int) bool {
 }
 
 // getFieldRawBounds returns the raw start and end positions for a field in the buffer.
-func (r *Reader) getFieldRawBounds() (uint64, uint64) {
+func (r *Reader) getFieldRawBounds(fieldIdx int) (uint64, uint64) {
 	field := r.parseResult.fields[fieldIdx]
 	return uint64(field.rawStart()), uint64(field.rawEnd())
 }
