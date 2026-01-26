@@ -11,7 +11,7 @@ import (
 // fieldNormalizer is a pre-compiled replacer for common field transformations.
 // Using a single Replacer for both operations is more efficient than separate calls.
 var fieldNormalizer = strings.NewReplacer(
-	`""`, `"`,    // Unescape double quotes
+	`""`, `"`, // Unescape double quotes
 	"\r\n", "\n", // Normalize CRLF to LF
 )
 

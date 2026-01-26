@@ -81,12 +81,6 @@ func shouldUseSIMD(dataLen int) bool {
 	return useAVX512 && dataLen >= simdMinThreshold
 }
 
-// shouldUseSIMDForChunk returns true if SIMD should be used for full chunk processing.
-// Requires data length >= simdChunkSize (64 bytes).
-func shouldUseSIMDForChunk(dataLen int) bool {
-	return useAVX512 && dataLen >= simdChunkSize
-}
-
 // scanState holds state carried between chunks during SIMD scanning
 type scanState struct {
 	quoted        uint64 // Quote state flag (0=outside, ^0=inside)
