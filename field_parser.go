@@ -32,8 +32,10 @@ type parseResult struct {
 
 // fieldInfo holds field position information
 type fieldInfo struct {
-	start         uint64 // Start offset in buffer
-	length        uint64 // Field length (after quote removal)
+	start         uint64 // Start offset in buffer (content start, after opening quote if quoted)
+	length        uint64 // Field length (content length, excluding quotes)
+	rawStart      uint64 // Raw start offset in buffer (including opening quote if quoted)
+	rawEnd        uint64 // Raw end offset in buffer (position after field, at separator/newline)
 	needsUnescape bool   // Needs double quote unescaping
 }
 
@@ -190,6 +192,7 @@ func processQuoteEvent(absPos uint64, state *parserState) {
 // recordField calculates field bounds and appends to result.
 // If isNewline is true, it checks for and excludes a trailing CR (for CRLF handling).
 func recordField(buf []byte, absPos uint64, state *parserState, result *parseResult, isNewline bool) {
+	rawStart := state.fieldStart
 	start := state.fieldStart + state.quoteAdjust
 	endPos := absPos
 
@@ -202,8 +205,10 @@ func recordField(buf []byte, absPos uint64, state *parserState, result *parseRes
 	fieldLen := calculateFieldLength(endPos, start, state)
 
 	result.fields = append(result.fields, fieldInfo{
-		start:  start,
-		length: fieldLen,
+		start:    start,
+		length:   fieldLen,
+		rawStart: rawStart,
+		rawEnd:   absPos,
 	})
 
 	state.fieldStart = absPos + 1
@@ -242,13 +247,16 @@ func calculateFieldLength(endPos, start uint64, state *parserState) uint64 {
 
 // finalizeLastField handles the last field when file doesn't end with newline
 func finalizeLastField(buf []byte, state *parserState, result *parseResult, currentRowFirstField, lineNum int) {
+	rawStart := state.fieldStart
 	start := state.fieldStart + state.quoteAdjust
 	bufLen := uint64(len(buf))
 	fieldLen := calculateFieldLength(bufLen, start, state)
 
 	result.fields = append(result.fields, fieldInfo{
-		start:  start,
-		length: fieldLen,
+		start:    start,
+		length:   fieldLen,
+		rawStart: rawStart,
+		rawEnd:   bufLen,
 	})
 
 	fieldCount := len(result.fields) - currentRowFirstField
@@ -259,28 +267,36 @@ func finalizeLastField(buf []byte, state *parserState, result *parseResult, curr
 	})
 }
 
-// postProcessFields marks fields needing double quote unescaping
-// Fields that fall within chunks listed in postProcChunks are flagged
+// postProcessFields marks fields needing double quote unescaping.
+// Fields that overlap with chunks listed in postProcChunks are flagged.
 func postProcessFields(buf []byte, result *parseResult, postProcChunks []int) {
 	if len(postProcChunks) == 0 {
 		return
 	}
 
-	// For each chunk that needs post-processing, find overlapping fields
-	for _, chunkIdx := range postProcChunks {
-		chunkStart := uint64(chunkIdx * simdChunkSize)
-		chunkEnd := chunkStart + 64
+	chunkSet := make(map[int]struct{}, len(postProcChunks))
+	for _, idx := range postProcChunks {
+		chunkSet[idx] = struct{}{}
+	}
 
-		// Search for fields that start within this chunk range
-		for i := range result.fields {
-			f := &result.fields[i]
-			// Field overlaps with chunk if field starts within chunk
-			// or field spans across chunk boundary
-			fieldEnd := f.start + f.length
-			if (f.start >= chunkStart && f.start < chunkEnd) ||
-				(f.start < chunkStart && fieldEnd > chunkStart) {
-				// Mark this field as needing unescape processing
-				f.needsUnescape = true
+	for i := range result.fields {
+		f := &result.fields[i]
+
+		startChunk := int(f.start / simdChunkSize)
+		if _, ok := chunkSet[startChunk]; ok {
+			f.needsUnescape = true
+			continue
+		}
+
+		if f.length > 0 {
+			endChunk := int((f.start + f.length - 1) / simdChunkSize)
+			if endChunk != startChunk {
+				for c := startChunk; c <= endChunk; c++ {
+					if _, ok := chunkSet[c]; ok {
+						f.needsUnescape = true
+						break
+					}
+				}
 			}
 		}
 	}
