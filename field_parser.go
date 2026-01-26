@@ -31,12 +31,45 @@ type parseResult struct {
 }
 
 // fieldInfo holds field position information
+// Memory layout optimized: 24 bytes (same as original without raw bounds)
 type fieldInfo struct {
-	start         uint64 // Start offset in buffer (content start, after opening quote if quoted)
-	length        uint64 // Field length (content length, excluding quotes)
-	rawStart      uint64 // Raw start offset in buffer (including opening quote if quoted)
-	rawEnd        uint64 // Raw end offset in buffer (position after field, at separator/newline)
-	needsUnescape bool   // Needs double quote unescaping
+	start       uint64 // Start offset in buffer (content start, after opening quote if quoted)
+	length      uint64 // Field length (content length, excluding quotes)
+	rawEndDelta uint8  // Delta from start+length to rawEnd (typically 0-2)
+	flags       uint8  // bit0: needsUnescape, bit1: isQuoted (for rawStart calculation)
+	// 6 bytes padding
+}
+
+const (
+	fieldFlagNeedsUnescape = 1 << 0
+	fieldFlagIsQuoted      = 1 << 1
+)
+
+// rawStart returns the raw start position (including opening quote if quoted)
+func (f *fieldInfo) rawStart() uint64 {
+	if f.flags&fieldFlagIsQuoted != 0 {
+		return f.start - 1
+	}
+	return f.start
+}
+
+// rawEnd returns the raw end position (at separator/newline)
+func (f *fieldInfo) rawEnd() uint64 {
+	return f.start + f.length + uint64(f.rawEndDelta)
+}
+
+// setNeedsUnescape sets the needsUnescape flag
+func (f *fieldInfo) setNeedsUnescape(v bool) {
+	if v {
+		f.flags |= fieldFlagNeedsUnescape
+	} else {
+		f.flags &^= fieldFlagNeedsUnescape
+	}
+}
+
+// needsUnescape returns whether the field needs double quote unescaping
+func (f *fieldInfo) needsUnescape() bool {
+	return f.flags&fieldFlagNeedsUnescape != 0
 }
 
 // rowInfo holds row metadata
@@ -192,7 +225,6 @@ func processQuoteEvent(absPos uint64, state *parserState) {
 // recordField calculates field bounds and appends to result.
 // If isNewline is true, it checks for and excludes a trailing CR (for CRLF handling).
 func recordField(buf []byte, absPos uint64, state *parserState, result *parseResult, isNewline bool) {
-	rawStart := state.fieldStart
 	start := state.fieldStart + state.quoteAdjust
 	endPos := absPos
 
@@ -204,11 +236,23 @@ func recordField(buf []byte, absPos uint64, state *parserState, result *parseRes
 
 	fieldLen := calculateFieldLength(endPos, start, state)
 
+	// Calculate rawEndDelta: absPos - (start + fieldLen)
+	rawEndDelta := uint8(0)
+	if absPos > start+fieldLen {
+		rawEndDelta = uint8(absPos - start - fieldLen)
+	}
+
+	// Set flags
+	var flags uint8
+	if state.quoteAdjust > 0 {
+		flags |= fieldFlagIsQuoted
+	}
+
 	result.fields = append(result.fields, fieldInfo{
-		start:    start,
-		length:   fieldLen,
-		rawStart: rawStart,
-		rawEnd:   absPos,
+		start:       start,
+		length:      fieldLen,
+		rawEndDelta: rawEndDelta,
+		flags:       flags,
 	})
 
 	state.fieldStart = absPos + 1
@@ -247,16 +291,27 @@ func calculateFieldLength(endPos, start uint64, state *parserState) uint64 {
 
 // finalizeLastField handles the last field when file doesn't end with newline
 func finalizeLastField(buf []byte, state *parserState, result *parseResult, currentRowFirstField, lineNum int) {
-	rawStart := state.fieldStart
 	start := state.fieldStart + state.quoteAdjust
 	bufLen := uint64(len(buf))
 	fieldLen := calculateFieldLength(bufLen, start, state)
 
+	// Calculate rawEndDelta: bufLen - (start + fieldLen)
+	rawEndDelta := uint8(0)
+	if bufLen > start+fieldLen {
+		rawEndDelta = uint8(bufLen - start - fieldLen)
+	}
+
+	// Set flags
+	var flags uint8
+	if state.quoteAdjust > 0 {
+		flags |= fieldFlagIsQuoted
+	}
+
 	result.fields = append(result.fields, fieldInfo{
-		start:    start,
-		length:   fieldLen,
-		rawStart: rawStart,
-		rawEnd:   bufLen,
+		start:       start,
+		length:      fieldLen,
+		rawEndDelta: rawEndDelta,
+		flags:       flags,
 	})
 
 	fieldCount := len(result.fields) - currentRowFirstField
@@ -284,7 +339,7 @@ func postProcessFields(buf []byte, result *parseResult, postProcChunks []int) {
 
 		startChunk := int(f.start / simdChunkSize)
 		if _, ok := chunkSet[startChunk]; ok {
-			f.needsUnescape = true
+			f.setNeedsUnescape(true)
 			continue
 		}
 
@@ -293,7 +348,7 @@ func postProcessFields(buf []byte, result *parseResult, postProcChunks []int) {
 			if endChunk != startChunk {
 				for c := startChunk; c <= endChunk; c++ {
 					if _, ok := chunkSet[c]; ok {
-						f.needsUnescape = true
+						f.setNeedsUnescape(true)
 						break
 					}
 				}
@@ -327,7 +382,7 @@ func extractField(buf []byte, field fieldInfo) string {
 	}
 
 	// Fast path: check if any transformation is needed
-	needsTransform := field.needsUnescape || containsCRLF(s)
+	needsTransform := field.needsUnescape() || containsCRLF(s)
 	if !needsTransform {
 		return s
 	}

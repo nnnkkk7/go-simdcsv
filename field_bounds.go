@@ -24,8 +24,9 @@ func (r *Reader) isCommentLine(row rowInfo, rowIdx int) bool {
 	if field.length == 0 && field.start < uint64(len(r.rawBuffer)) {
 		return false
 	}
-	if field.rawStart < uint64(len(r.rawBuffer)) {
-		return r.rawBuffer[field.rawStart] == byte(r.Comment)
+	rawStart := field.rawStart()
+	if rawStart < uint64(len(r.rawBuffer)) {
+		return r.rawBuffer[rawStart] == byte(r.Comment)
 	}
 	return false
 }
@@ -33,5 +34,5 @@ func (r *Reader) isCommentLine(row rowInfo, rowIdx int) bool {
 // getFieldRawBounds returns the raw start and end positions for a field in the buffer.
 func (r *Reader) getFieldRawBounds(row rowInfo, rowIdx, fieldIdx, fieldNum int) (uint64, uint64) {
 	field := r.parseResult.fields[fieldIdx]
-	return field.rawStart, field.rawEnd
+	return field.rawStart(), field.rawEnd()
 }
