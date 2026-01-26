@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.0.8](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.7...v0.0.8) - 2026-01-26
+- ci: add avx512 workflow by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/29
+- ci: fix and rename wf for avx512 by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/31
+
 ## [v0.0.7](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.6...v0.0.7) - 2026-01-26
 - refactor: update comments and constants for SIMD processing by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/24
 - docs: update readme by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/26
