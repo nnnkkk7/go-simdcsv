@@ -1,5 +1,6 @@
 //go:build goexperiment.simd && amd64
 
+//nolint:gosec // G115: Integer conversions are safe - buffer size bounded by DefaultMaxInputSize (2GB)
 package simdcsv
 
 // =============================================================================

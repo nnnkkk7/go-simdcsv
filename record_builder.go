@@ -1,5 +1,6 @@
 //go:build goexperiment.simd && amd64
 
+//nolint:gosec // G115: Integer conversions are safe - buffer size bounded by DefaultMaxInputSize (2GB)
 package simdcsv
 
 // =============================================================================
@@ -126,7 +127,7 @@ func (r *Reader) getFieldContent(field fieldInfo) []byte {
 	if field.length == 0 {
 		return nil
 	}
-	end := uint32(field.start) + uint32(field.length)
+	end := field.start + field.length
 	bufLen := uint32(len(r.rawBuffer))
 	if end > bufLen {
 		end = bufLen

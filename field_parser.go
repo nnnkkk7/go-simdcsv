@@ -5,14 +5,6 @@ package simdcsv
 
 import (
 	"math/bits"
-	"strings"
-)
-
-// fieldNormalizer is a pre-compiled replacer for common field transformations.
-// Using a single Replacer for both operations is more efficient than separate calls.
-var fieldNormalizer = strings.NewReplacer(
-	`""`, `"`, // Unescape double quotes
-	"\r\n", "\n", // Normalize CRLF to LF
 )
 
 // parserState holds state carried between chunks during field parsing
@@ -356,48 +348,3 @@ func postProcessFields(_ []byte, result *parseResult, postProcChunks []int) {
 	}
 }
 
-// extractFieldSafe safely extracts a field string from buffer.
-// Returns empty string if bounds are invalid, ensuring no panic occurs.
-func extractFieldSafe(buf []byte, start, length uint32) string {
-	if length == 0 {
-		return ""
-	}
-	bufLen := uint32(len(buf))
-	if start >= bufLen {
-		return ""
-	}
-	end := start + length
-	if end > bufLen {
-		end = bufLen
-	}
-	return string(buf[start:end])
-}
-
-// extractField extracts a field string, applying unescaping and CRLF normalization if needed.
-func extractField(buf []byte, field fieldInfo) string {
-	s := extractFieldSafe(buf, field.start, field.length)
-	if len(s) == 0 {
-		return s
-	}
-
-	// Fast path: check if any transformation is needed
-	needsTransform := field.needsUnescape() || containsCRLF(s)
-	if !needsTransform {
-		return s
-	}
-
-	// Apply transformations using pre-compiled replacer
-	// This is more efficient than separate Contains + ReplaceAll calls
-	return fieldNormalizer.Replace(s)
-}
-
-// containsCRLF checks if the string contains CRLF sequences.
-// This is a fast check to avoid unnecessary replacer calls.
-func containsCRLF(s string) bool {
-	for i := 0; i < len(s)-1; i++ {
-		if s[i] == '\r' && s[i+1] == '\n' {
-			return true
-		}
-	}
-	return false
-}
