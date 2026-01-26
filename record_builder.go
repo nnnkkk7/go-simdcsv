@@ -37,7 +37,7 @@ func (r *Reader) buildRecordWithValidation(row rowInfo, rowIdx int) ([]string, e
 		field := r.parseResult.fields[fieldIdx]
 
 		// Get raw field data for validation
-		rawStart, rawEnd := r.getFieldRawBounds(row, rowIdx, fieldIdx, i)
+		rawStart, rawEnd := r.getFieldRawBounds()
 
 		// Validate quotes unless LazyQuotes is enabled
 		if !r.LazyQuotes {
@@ -126,11 +126,12 @@ func (r *Reader) getFieldContent(field fieldInfo) []byte {
 	if field.length == 0 {
 		return nil
 	}
-	end := field.start + field.length
-	if end > uint64(len(r.rawBuffer)) {
-		end = uint64(len(r.rawBuffer))
+	end := uint32(field.start) + uint32(field.length)
+	bufLen := uint32(len(r.rawBuffer))
+	if end > bufLen {
+		end = bufLen
 	}
-	if field.start >= uint64(len(r.rawBuffer)) {
+	if field.start >= bufLen {
 		return nil
 	}
 	return r.rawBuffer[field.start:end]

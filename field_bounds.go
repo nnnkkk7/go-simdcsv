@@ -12,7 +12,7 @@ func (r *Reader) isFirstNonCommentRecord() bool {
 }
 
 // isCommentLine checks if a row is a comment line.
-func (r *Reader) isCommentLine(row rowInfo, rowIdx int) bool {
+func (r *Reader) isCommentLine(row rowInfo, _ int) bool {
 	if r.Comment == 0 || row.fieldCount == 0 {
 		return false
 	}
@@ -21,18 +21,18 @@ func (r *Reader) isCommentLine(row rowInfo, rowIdx int) bool {
 		return false
 	}
 	field := r.parseResult.fields[firstFieldIdx]
-	if field.length == 0 && field.start < uint64(len(r.rawBuffer)) {
+	if field.length == 0 && field.start < uint32(len(r.rawBuffer)) {
 		return false
 	}
 	rawStart := field.rawStart()
-	if rawStart < uint64(len(r.rawBuffer)) {
+	if rawStart < uint32(len(r.rawBuffer)) {
 		return r.rawBuffer[rawStart] == byte(r.Comment)
 	}
 	return false
 }
 
 // getFieldRawBounds returns the raw start and end positions for a field in the buffer.
-func (r *Reader) getFieldRawBounds(row rowInfo, rowIdx, fieldIdx, fieldNum int) (uint64, uint64) {
+func (r *Reader) getFieldRawBounds() (uint64, uint64) {
 	field := r.parseResult.fields[fieldIdx]
-	return field.rawStart(), field.rawEnd()
+	return uint64(field.rawStart()), uint64(field.rawEnd())
 }

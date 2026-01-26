@@ -31,13 +31,12 @@ type parseResult struct {
 }
 
 // fieldInfo holds field position information
-// Memory layout optimized: 24 bytes (same as original without raw bounds)
 type fieldInfo struct {
-	start       uint64 // Start offset in buffer (content start, after opening quote if quoted)
-	length      uint64 // Field length (content length, excluding quotes)
+	start       uint32 // Start offset in buffer (content start, after opening quote if quoted)
+	length      uint32 // Field length (content length, excluding quotes)
 	rawEndDelta uint8  // Delta from start+length to rawEnd (typically 0-2)
 	flags       uint8  // bit0: needsUnescape, bit1: isQuoted (for rawStart calculation)
-	// 6 bytes padding
+	// 2 bytes padding
 }
 
 const (
@@ -46,7 +45,7 @@ const (
 )
 
 // rawStart returns the raw start position (including opening quote if quoted)
-func (f *fieldInfo) rawStart() uint64 {
+func (f *fieldInfo) rawStart() uint32 {
 	if f.flags&fieldFlagIsQuoted != 0 {
 		return f.start - 1
 	}
@@ -54,8 +53,8 @@ func (f *fieldInfo) rawStart() uint64 {
 }
 
 // rawEnd returns the raw end position (at separator/newline)
-func (f *fieldInfo) rawEnd() uint64 {
-	return f.start + f.length + uint64(f.rawEndDelta)
+func (f *fieldInfo) rawEnd() uint32 {
+	return f.start + f.length + uint32(f.rawEndDelta)
 }
 
 // setNeedsUnescape sets the needsUnescape flag
@@ -249,8 +248,8 @@ func recordField(buf []byte, absPos uint64, state *parserState, result *parseRes
 	}
 
 	result.fields = append(result.fields, fieldInfo{
-		start:       start,
-		length:      fieldLen,
+		start:       uint32(start),
+		length:      uint32(fieldLen),
 		rawEndDelta: rawEndDelta,
 		flags:       flags,
 	})
@@ -308,8 +307,8 @@ func finalizeLastField(buf []byte, state *parserState, result *parseResult, curr
 	}
 
 	result.fields = append(result.fields, fieldInfo{
-		start:       start,
-		length:      fieldLen,
+		start:       uint32(start),
+		length:      uint32(fieldLen),
 		rawEndDelta: rawEndDelta,
 		flags:       flags,
 	})
@@ -324,7 +323,7 @@ func finalizeLastField(buf []byte, state *parserState, result *parseResult, curr
 
 // postProcessFields marks fields needing double quote unescaping.
 // Fields that overlap with chunks listed in postProcChunks are flagged.
-func postProcessFields(buf []byte, result *parseResult, postProcChunks []int) {
+func postProcessFields(_ []byte, result *parseResult, postProcChunks []int) {
 	if len(postProcChunks) == 0 {
 		return
 	}
@@ -337,14 +336,14 @@ func postProcessFields(buf []byte, result *parseResult, postProcChunks []int) {
 	for i := range result.fields {
 		f := &result.fields[i]
 
-		startChunk := int(f.start / simdChunkSize)
+		startChunk := int(uint64(f.start) / simdChunkSize)
 		if _, ok := chunkSet[startChunk]; ok {
 			f.setNeedsUnescape(true)
 			continue
 		}
 
 		if f.length > 0 {
-			endChunk := int((f.start + f.length - 1) / simdChunkSize)
+			endChunk := int((uint64(f.start) + uint64(f.length) - 1) / simdChunkSize)
 			if endChunk != startChunk {
 				for c := startChunk; c <= endChunk; c++ {
 					if _, ok := chunkSet[c]; ok {
@@ -359,11 +358,11 @@ func postProcessFields(buf []byte, result *parseResult, postProcChunks []int) {
 
 // extractFieldSafe safely extracts a field string from buffer.
 // Returns empty string if bounds are invalid, ensuring no panic occurs.
-func extractFieldSafe(buf []byte, start, length uint64) string {
+func extractFieldSafe(buf []byte, start, length uint32) string {
 	if length == 0 {
 		return ""
 	}
-	bufLen := uint64(len(buf))
+	bufLen := uint32(len(buf))
 	if start >= bufLen {
 		return ""
 	}
