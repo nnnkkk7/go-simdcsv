@@ -1,4 +1,4 @@
-name: AVX-512 Benchmark
+name: AVX-512 CI
 
 # 手動実行のみ
 on:
@@ -12,7 +12,7 @@ on:
       benchmark_count:
         description: 'Number of benchmark iterations'
         required: false
-        default: '5'
+        default: '1'
         type: string
 
 jobs:
