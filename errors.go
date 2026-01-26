@@ -9,10 +9,15 @@ import (
 
 // Sentinel errors returned by [Reader]. These are compatible with [encoding/csv].
 var (
-	ErrBareQuote  = errors.New("bare \" in non-quoted-field")
-	ErrQuote      = errors.New("extraneous or missing \" in quoted-field")
-	ErrFieldCount = errors.New("wrong number of fields")
+	ErrBareQuote    = errors.New("bare \" in non-quoted-field")
+	ErrQuote        = errors.New("extraneous or missing \" in quoted-field")
+	ErrFieldCount   = errors.New("wrong number of fields")
+	ErrInputTooLarge = errors.New("input exceeds maximum allowed size")
 )
+
+// DefaultMaxInputSize is the default maximum input size (2GB).
+// This can be overridden via ReaderOptions.MaxInputSize.
+const DefaultMaxInputSize = 2 * 1024 * 1024 * 1024 // 2GB
 
 // ParseError represents a parsing error with location information.
 type ParseError struct {

@@ -117,8 +117,8 @@ func (w *Writer) fieldNeedsQuotes(field string) bool {
 	if field[0] == ' ' || field[0] == '\t' {
 		return true
 	}
-	// Use SIMD for ASCII comma and fields >= simdMinThreshold bytes
-	if useAVX512 && len(field) >= simdMinThreshold && w.Comma < 128 {
+	// Use SIMD for ASCII comma and fields meeting threshold
+	if shouldUseSIMD(len(field)) && w.Comma < 128 {
 		return w.fieldNeedsQuotesSIMD(field)
 	}
 	return w.fieldNeedsQuotesScalar(field)
@@ -180,8 +180,7 @@ func (w *Writer) writeQuotedField(field string) error {
 		return err
 	}
 
-	// Use SIMD to find quote positions for faster processing
-	if useAVX512 && len(field) >= simdMinThreshold {
+	if shouldUseSIMD(len(field)) {
 		return w.writeQuotedFieldSIMD(field)
 	}
 	return w.writeQuotedFieldScalar(field)
