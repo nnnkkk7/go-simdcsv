@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.0.7](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.6...v0.0.7) - 2026-01-26
+- refactor: update comments and constants for SIMD processing by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/24
+- docs: update readme by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/26
+- chore: fix formatting by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/27
+- feat: enhance CSV reader with input size limit and new field processing functions by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/28
+
 ## [v0.0.6](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.5...v0.0.6) - 2026-01-25
 - feat: implement SIMD-accelerated unescaping and quote handling by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/18
 - docs: update readme by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/20
