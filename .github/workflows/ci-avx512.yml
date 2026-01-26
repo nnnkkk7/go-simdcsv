@@ -16,8 +16,8 @@ on:
         type: string
 
 jobs:
-  benchmark:
-    name: Run AVX-512 Benchmarks
+  ci:
+    name: Run AVX-512 CI
     runs-on: [self-hosted, linux, x64, avx512]
 
     env:
