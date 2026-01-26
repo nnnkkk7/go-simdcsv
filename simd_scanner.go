@@ -83,11 +83,8 @@ func shouldUseSIMD(dataLen int) bool {
 
 // scanState holds state carried between chunks during SIMD scanning
 type scanState struct {
-	quoted              uint64 // Quote state flag (0=outside, ^0=inside)
-	skipNextQuote       bool   // Skip quote at next chunk start (for boundary double quotes)
-	prevEndedWithQuote  bool   // Previous chunk ended with quote at position 63 (inside quoted region)
-	prevEndedWithCR     bool   // Previous chunk ended with CR at position 63
-	prevChunkIdx        int    // Previous chunk index (for updating postProcChunks)
+	quoted        uint64 // Quote state flag (0=outside, ^0=inside)
+	skipNextQuote bool   // Skip quote at next chunk start (for boundary double quotes)
 }
 
 // scanResult represents the result of SIMD scanning (bitmasks for structural characters)
@@ -213,13 +210,14 @@ func generateMasksPadded(data []byte, separator byte) (quote, sep, cr, nl uint64
 // - Quote state tracking (inside/outside quoted regions)
 // - Invalidating separators and newlines inside quotes
 // - Detecting double quotes ("") for escaping
-// - Setting boundary state for deferred boundary double quote detection
+// - Detecting boundary double quotes (quote at position 63 with quote at position 0 of next chunk)
 //
 // Returns:
 // - quoteMaskOut: adjusted quote mask with escaped double quotes removed
 // - sepMaskOut: separator mask with separators inside quotes removed
 // - hasDoubleQuote: true if this chunk contains escaped double quotes (needs post-processing)
-func processQuotesAndSeparators(quoteMask, sepMask, newlineMask uint64, state *scanState) (quoteMaskOut, sepMaskOut uint64, hasDoubleQuote bool) {
+// - boundaryDoubleQuote: true if there's a double quote spanning chunk boundary
+func processQuotesAndSeparators(quoteMask, sepMask, newlineMask, nextQuoteMask uint64, state *scanState) (quoteMaskOut, sepMaskOut uint64, hasDoubleQuote, boundaryDoubleQuote bool) {
 	quoteMaskOut = quoteMask
 	sepMaskOut = sepMask
 
@@ -227,10 +225,6 @@ func processQuotesAndSeparators(quoteMask, sepMask, newlineMask uint64, state *s
 	workSepMask := sepMask
 	workNewlineMask := newlineMask
 	quoted := state.quoted
-
-	// Track if we end with a quote at position 63 while inside a quoted region
-	// This will be checked at the start of the next chunk
-	state.prevEndedWithQuote = false
 
 	for {
 		quotePos := bits.TrailingZeros64(workQuoteMask)
@@ -244,16 +238,15 @@ func processQuotesAndSeparators(quoteMask, sepMask, newlineMask uint64, state *s
 
 		switch minPos {
 		case quotePos:
-			// Process quote character
+			// Process quote character (inlined for simplicity)
 			if quoted != 0 {
 				// Inside quoted region - check for escape sequences
-				if quotePos == simdChunkSize-1 {
-					// Quote at position 63 - defer boundary double quote check to next chunk
-					// Don't close the quoted region yet; let next chunk decide
-					state.prevEndedWithQuote = true
-					// Tentatively remove from quote mask (will be confirmed in next chunk)
+				if quotePos == simdChunkSize-1 && nextQuoteMask&1 != 0 {
+					// Boundary double quote
 					quoteMaskOut &= ^(uint64(1) << (simdChunkSize - 1))
-				} else if workQuoteMask&(uint64(1)<<(quotePos+1)) != 0 {
+					hasDoubleQuote = true
+					boundaryDoubleQuote = true
+				} else if quotePos < simdChunkSize-1 && workQuoteMask&(uint64(1)<<(quotePos+1)) != 0 {
 					// Adjacent double quote within chunk
 					quoteMaskOut &= ^(uint64(3) << quotePos)
 					hasDoubleQuote = true
@@ -276,7 +269,7 @@ func processQuotesAndSeparators(quoteMask, sepMask, newlineMask uint64, state *s
 	}
 
 	state.quoted = quoted
-	return quoteMaskOut, sepMaskOut, hasDoubleQuote
+	return quoteMaskOut, sepMaskOut, hasDoubleQuote, boundaryDoubleQuote
 }
 
 // minOfThree returns the minimum of three integers.
@@ -294,11 +287,8 @@ func minOfThree(a, b, c int) int {
 // It generates structural character masks and handles:
 // - CRLF normalization (CRLF pairs are normalized to LF only in output)
 // - Quote state tracking across chunk boundaries
-// - Boundary double quote detection (quotes spanning chunks) - deferred to next chunk
+// - Boundary double quote detection (quotes spanning chunks)
 // - Recording chunks that need post-processing for double quote unescaping
-//
-// Optimization: No lookahead - boundary conditions are handled by storing state
-// and processing at the start of the next chunk iteration.
 func scanBuffer(buf []byte, separatorChar byte) *scanResult {
 	if len(buf) == 0 {
 		return &scanResult{}
@@ -330,40 +320,20 @@ func scanBuffer(buf []byte, separatorChar byte) *scanResult {
 			result.lastChunkBits = validBits
 		}
 
-		// Handle boundary conditions from previous chunk (deferred processing)
-		if chunkIdx > 0 {
-			// Handle boundary double quote from previous chunk
-			if state.prevEndedWithQuote {
-				if quoteMask&1 != 0 {
-					// Confirmed boundary double quote: prev chunk pos 63 + this chunk pos 0
-					// Skip the first quote of this chunk (it's the second quote of the pair)
-					quoteMask &= ^uint64(1)
-					// Mark previous chunk as needing post-processing
-					if !containsInt(result.postProcChunks, state.prevChunkIdx) {
-						result.postProcChunks = append(result.postProcChunks, state.prevChunkIdx)
-					}
-				} else {
-					// Not a boundary double quote - it was a closing quote
-					// The quote state was already toggled in processQuotesAndSeparators,
-					// but we need to close it now since it wasn't a double quote
-					state.quoted = 0
-				}
-				state.prevEndedWithQuote = false
-			}
-
-			// Handle boundary CRLF from previous chunk
-			if state.prevEndedWithCR {
-				if nlMask&1 != 0 {
-					// Boundary CRLF confirmed: the LF at position 0 is the actual delimiter
-					// Nothing special needed - LF will be processed normally
-				}
-				// Note: If it wasn't boundary CRLF, the CR was already added to
-				// newlineMask of previous chunk as an isolated CR
-				state.prevEndedWithCR = false
+		// Lookahead to next chunk for boundary handling
+		var nextQuoteMask, nextNlMask uint64
+		if remaining > simdChunkSize {
+			nextRemaining := remaining - simdChunkSize
+			if nextRemaining >= simdChunkSize {
+				nextQuoteMask, _, _, nextNlMask = generateMasks(buf[offset+simdChunkSize:offset+2*simdChunkSize], separatorChar)
+			} else {
+				nextQuoteMask, _, _, nextNlMask, _ = generateMasksPadded(buf[offset+simdChunkSize:], separatorChar)
 			}
 		}
 
-		// Handle skip next quote (for boundary double quotes detected in previous iteration)
+		// Handle boundary double quote from previous chunk
+		// If previous chunk ended with a quote that's part of a double quote sequence,
+		// skip the first quote of this chunk
 		if state.skipNextQuote && quoteMask&1 != 0 {
 			quoteMask &= ^uint64(1) // Skip the first quote
 		}
@@ -383,50 +353,27 @@ func scanBuffer(buf []byte, separatorChar byte) *scanResult {
 		newlineMaskOut |= isolatedCRs
 
 		// Handle CR at position 63 (may be part of boundary CRLF)
-		// Defer to next chunk instead of lookahead
 		if validBits == simdChunkSize && crMask&(1<<63) != 0 {
-			// Check if this CR is already part of a CRLF pair within this chunk
-			if crlfPairs&(1<<63) == 0 {
-				// Not part of in-chunk CRLF, could be boundary CRLF or isolated CR
-				// Defer decision to next chunk
-				state.prevEndedWithCR = true
-				// Tentatively remove from newline mask (will be handled in next chunk)
+			if nextNlMask&1 != 0 {
+				// Boundary CRLF: CR at 63, LF at next chunk's 0
+				// Remove this CR from newline mask (next chunk's LF will be the delimiter)
 				newlineMaskOut &= ^(uint64(1) << 63)
-			}
-		}
-
-		// If this is the last chunk and we have a deferred CR, treat it as isolated CR
-		if chunkIdx == chunkCount-1 && state.prevEndedWithCR {
-			// This shouldn't happen since prevEndedWithCR is set in current iteration
-			// and checked at start of next iteration, but handle edge case
-			state.prevEndedWithCR = false
-		}
-
-		// For last chunk: if CR at last valid position, treat as newline
-		if chunkIdx == chunkCount-1 && validBits < simdChunkSize {
-			lastPos := validBits - 1
-			if lastPos >= 0 && crMask&(uint64(1)<<lastPos) != 0 {
-				// Check if it's part of CRLF
-				if crlfPairs&(uint64(1)<<lastPos) == 0 {
-					newlineMaskOut |= uint64(1) << lastPos
-				}
+			} else {
+				// Isolated CR at position 63: treat as newline
+				newlineMaskOut |= uint64(1) << 63
 			}
 		}
 
 		// Save the initial quoted state for newline invalidation
 		initialQuoted := state.quoted
 
-		// Save current chunk index for potential post-processing marking
-		state.prevChunkIdx = chunkIdx
-
 		// Process quotes and separators, invalidating those inside quoted regions
-		quoteMaskOut, sepMaskOut, hasDoubleQuote := processQuotesAndSeparators(
-			quoteMask, sepMask, newlineMaskOut, &state,
+		quoteMaskOut, sepMaskOut, hasDoubleQuote, boundaryDoubleQuote := processQuotesAndSeparators(
+			quoteMask, sepMask, newlineMaskOut, nextQuoteMask, &state,
 		)
 
-		// If prevEndedWithQuote is set, next chunk will handle boundary double quote detection
-		// and set skipNextQuote if needed
-		if state.prevEndedWithQuote {
+		// If there's a boundary double quote, the next chunk should skip its first quote
+		if boundaryDoubleQuote {
 			state.skipNextQuote = true
 		}
 
@@ -455,16 +402,6 @@ func scanBuffer(buf []byte, separatorChar byte) *scanResult {
 	result.finalQuoted = state.quoted
 
 	return result
-}
-
-// containsInt checks if a slice contains a specific integer.
-func containsInt(slice []int, val int) bool {
-	for _, v := range slice {
-		if v == val {
-			return true
-		}
-	}
-	return false
 }
 
 // invalidateNewlinesInQuotes removes newline bits that are inside quoted regions.
