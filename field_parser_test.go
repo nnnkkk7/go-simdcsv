@@ -749,7 +749,7 @@ func TestDoubleQuoteUnescape(t *testing.T) {
 		}
 
 		// First field should have needsUnescape=true
-		if !result.fields[0].needsUnescape {
+		if !result.fields[0].needsUnescape() {
 			t.Error("expected first field to have needsUnescape=true")
 		}
 	})
