@@ -37,31 +37,3 @@ jobs:
           GOEXPERIMENT: simd
         run: golangci-lint run
 
-  benchmark:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-
-      - name: Setup Go 1.26
-        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
-        with:
-          go-version: '1.26.0-rc.1'
-
-      - name: Run benchmarks
-        env:
-          GOEXPERIMENT: simd
-        run: |
-          go test -bench=. -benchmem -count=5 ./... | tee benchmark.txt
-
-      # Only store benchmark results when pushing to main
-      - name: Store benchmark result
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: benchmark-action/github-action-benchmark@4bdcce38c94cec68da58d012ac24b7b1155efe8b # v1.20.7
-        with:
-          tool: 'go'
-          output-file-path: benchmark.txt
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          auto-push: true
-          comment-on-alert: true
-          alert-threshold: '150%'
-          fail-on-alert: false

@@ -1,0 +1,64 @@
+name: AVX-512 Benchmark
+
+# 手動実行のみ
+on:
+  workflow_dispatch:
+    inputs:
+      benchmark_pattern:
+        description: 'Benchmark pattern (e.g., "." for all, "BenchmarkParse" for specific)'
+        required: false
+        default: '.'
+        type: string
+      benchmark_count:
+        description: 'Number of benchmark iterations'
+        required: false
+        default: '5'
+        type: string
+
+jobs:
+  benchmark:
+    name: Run AVX-512 Benchmarks
+    runs-on: [self-hosted, linux, x64, avx512]
+
+    env:
+      GOEXPERIMENT: simd
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Setup Go 1.26
+        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version: '1.26.0-rc.1'
+
+      - name: Verify AVX-512 Support
+        run: |
+          echo "=== CPU Info ==="
+          lscpu | grep -E "Model name|CPU\(s\)|Thread|Core|Socket"
+          echo ""
+          echo "=== Required AVX-512 Flags (avx512f, avx512bw, avx512vl) ==="
+          grep -oE 'avx512(f|bw|vl)' /proc/cpuinfo | sort -u
+          echo ""
+          echo "=== Go Version & GOEXPERIMENT ==="
+          go version
+          go env GOEXPERIMENT
+
+      - name: Run Tests
+        run: go test -v ./...
+
+      - name: Run Benchmarks
+        run: |
+          echo "=== Running Benchmarks ==="
+          go test -bench='${{ inputs.benchmark_pattern }}' \
+            -benchmem \
+            -count=${{ inputs.benchmark_count }} \
+            -cpu=1,2 \
+            ./... | tee benchmark-results.txt
+
+      - name: Upload Benchmark Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ github.run_number }}
+          path: benchmark-results.txt
+          retention-days: 90
