@@ -55,6 +55,10 @@ type Reader struct {
 	fieldPositions []position
 	lastRecord     []string
 
+	// Batch string allocation buffers
+	recordBuffer []byte // Field content accumulation buffer
+	fieldEnds    []int  // End positions for each field in recordBuffer
+
 	// SIMD processing state
 	scanResult            *scanResult  // Scan result (structural character masks)
 	parseResult           *parseResult // Parse result (extracted fields/rows)
