@@ -167,7 +167,7 @@ func ensureUint64SliceCap(s []uint64, required int) []uint64 {
 		newCap = required
 	}
 	// Add 25% headroom to reduce future reallocations
-	newCap = newCap + newCap/4
+	newCap += newCap / 4
 	return make([]uint64, required, newCap)
 }
 
@@ -185,7 +185,7 @@ func ensureBoolSliceCap(s []bool, required int) []bool {
 		newCap = required
 	}
 	// Add 25% headroom to reduce future reallocations
-	newCap = newCap + newCap/4
+	newCap += newCap / 4
 	return make([]bool, required, newCap)
 }
 
