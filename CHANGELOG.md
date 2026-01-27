@@ -1,5 +1,13 @@
 # Changelog
 
+## [v0.0.9](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.8...v0.0.9) - 2026-01-27
+- refactor: optimize field processing by simplifying raw field calculation by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/32
+- refactor: enhance fieldInfo structure and optimize raw field calculations by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/34
+- refactor: optimize record building with buffer reuse and improved field content handling by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/35
+- ci: update go version by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/37
+- refactor: unify fieldInfo structure and streamline raw field handling by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/36
+- ci: fix actions and pins version by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/38
+
 ## [v0.0.8](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.7...v0.0.8) - 2026-01-26
 - ci: add avx512 workflow by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/29
 - ci: fix and rename wf for avx512 by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/31
