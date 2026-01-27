@@ -1,14 +1,12 @@
 # go-simdcsv
 
-[![CI](https://github.com/nnnkkk7/go-simdcsv/actions/workflows/ci.yml/badge.svg)](https://github.com/nnnkkk7/go-simdcsv/actions/workflows/ci.yml)
- [![Go 1.26+](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white)](https://go.dev/)
- [![Go Report Card](https://goreportcard.com/badge/github.com/nnnkkk7/go-simdcsv)](https://goreportcard.com/report/github.com/nnnkkk7/go-simdcsv)
+[![Go 1.26+](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![Go Report Card](https://goreportcard.com/badge/github.com/nnnkkk7/go-simdcsv)](https://goreportcard.com/report/github.com/nnnkkk7/go-simdcsv)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-
 
 SIMD-accelerated CSV parser for Go - Drop-in replacement for `encoding/csv` with AVX-512 optimization.
 
-> **Experimental**: Requires Go 1.26+ with `GOEXPERIMENT=simd`. The SIMD API is unstable and may change now. Not recommended for production use.
+> **Experimental**: Requires Go 1.26+ with `GOEXPERIMENT=simd`. The SIMD API is unstable and may change. Not recommended for production use.
 
 ## Quick Start
 
@@ -16,8 +14,11 @@ SIMD-accelerated CSV parser for Go - Drop-in replacement for `encoding/csv` with
 import csv "github.com/nnnkkk7/go-simdcsv"
 
 reader := csv.NewReader(strings.NewReader("name,age\nAlice,30\nBob,25"))
-records, _ := reader.ReadAll()
-// [[name age] [Alice 30] [Bob 25]]
+records, err := reader.ReadAll()
+if err != nil {
+    log.Fatal(err)
+}
+// records: [[name age] [Alice 30] [Bob 25]]
 ```
 
 Same API as `encoding/csv` - just change the import.
@@ -44,6 +45,9 @@ go get github.com/nnnkkk7/go-simdcsv
 ```go
 reader := csv.NewReader(strings.NewReader(data))
 records, err := reader.ReadAll()
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
 ### Record-by-Record
@@ -54,6 +58,9 @@ for {
     record, err := reader.Read()
     if err == io.EOF {
         break
+    }
+    if err != nil {
+        log.Fatal(err)
     }
     // process record
 }
@@ -70,7 +77,7 @@ records, err := csv.ParseBytes(data, ',')
 ### Streaming with Callback
 
 ```go
-csv.ParseBytesStreaming(data, ',', func(record []string) error {
+err := csv.ParseBytesStreaming(data, ',', func(record []string) error {
     fmt.Println(record)
     return nil
 })
@@ -80,7 +87,7 @@ csv.ParseBytesStreaming(data, ',', func(record []string) error {
 
 ```go
 writer := csv.NewWriter(os.Stdout)
-writer.WriteAll([][]string{
+err := writer.WriteAll([][]string{
     {"name", "age"},
     {"Alice", "30"},
 })
@@ -108,6 +115,22 @@ reader := csv.NewReaderWithOptions(r, csv.ReaderOptions{
 })
 ```
 
+## Performance
+
+Benchmarks on AMD EPYC 9R14 with AVX-512 (Go 1.26, `GOEXPERIMENT=simd`).
+
+### ReadAll Throughput
+
+| Content | Size | encoding/csv | go-simdcsv | Comparison |
+|---------|------|--------------|------------|------------|
+| Unquoted fields | 10K rows | 216 MB/s | 262 MB/s | **+21% faster** |
+| Unquoted fields | 100K rows | 214 MB/s | 224 MB/s | **+5% faster** |
+| All quoted fields | 10K rows | 657 MB/s | 439 MB/s | -33% slower |
+
+**Note:** SIMD acceleration benefits unquoted CSV data at scale. Quoted fields currently have overhead from validation passes.
+
+```
+
 ## Architecture
 
 ```
@@ -119,8 +142,8 @@ reader := csv.NewReaderWithOptions(r, csv.ReaderOptions{
 
 | Stage | Function | Description |
 |-------|----------|-------------|
-| **Scan** | `scanBuffer()` | SIMD scanning in 64-byte chunks. Detects `"`, `,`, `\n`, `\r` positions as bitmasks. Handles CRLF and quote state across boundaries. |
-| **Parse** | `parseBuffer()` | Iterates bitmasks to find field boundaries. Outputs `fieldInfo` (offset, length) and `rowInfo` (field count). |
+| **Scan** | `scanBuffer()` | SIMD scanning in 64-byte chunks. Detects `"`, `,`, `\n`, `\r` positions as bitmasks. |
+| **Parse** | `parseBuffer()` | Iterates bitmasks to find field boundaries. Outputs `fieldInfo` and `rowInfo`. |
 | **Build** | `buildRecords()` | Extracts strings from positions. Applies `""` → `"` unescaping. |
 
 ## Requirements
@@ -152,23 +175,11 @@ GOEXPERIMENT=simd go test -v ./...
 GOEXPERIMENT=simd go test -bench=. -benchmem
 ```
 
-## Performance
-
-Benchmarks comparing `go-simdcsv` against `encoding/csv`:
-
-| Benchmark | encoding/csv | go-simdcsv | Speedup |
-|-----------|--------------|------------|---------|
-| Small (1KB) | - | - | - |
-| Medium (100KB) | - | - | - |
-| Large (10MB) | - | - | - |
-
-> TODO: Add benchmark results from AVX-512 environment.
-
 ## Known Limitations
 
 - **Experimental API**: `simd/archsimd` may have breaking changes in future Go releases
-- **Memory**: Reads entire input into memory (streaming I/O planned for future)
-- **Custom delimiters**: Some edge cases with non-comma delimiters may differ from `encoding/csv`
+- **Memory**: Reads entire input into memory (streaming I/O planned)
+- **Quoted fields**: Currently slower than `encoding/csv` for heavily quoted content
 
 ## Contributing
 
