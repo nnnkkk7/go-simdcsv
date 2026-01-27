@@ -65,6 +65,7 @@ type Reader struct {
 	currentRecordIndex    int          // Current record index in parseResult.rows
 	nonCommentRecordCount int          // Count of non-comment records returned (for O(1) first record detection)
 	initialized           bool         // Whether scan/parse have been run
+	hasQuotes             bool         // True if input contains any quote characters (for fast path)
 
 	// Extended options (set via NewReaderWithOptions)
 	skipBOM      bool  // Skip UTF-8 BOM if present
@@ -213,6 +214,9 @@ func (r *Reader) initialize() error {
 	// Scan: structural analysis using SIMD (generates bitmasks)
 	separatorChar := byte(r.Comma)
 	r.scanResult = scanBuffer(r.rawBuffer, separatorChar)
+
+	// Copy hasQuotes flag for fast path optimization
+	r.hasQuotes = r.scanResult.hasQuotes
 
 	// Parse: extract fields and rows from scan result
 	// Note: parseBuffer already calls postProcessFields internally

@@ -126,9 +126,9 @@ func parseBuffer(buf []byte, sr *scanResult) *parseResult {
 		finalizeLastField(buf, &state, result, currentRowFirstField, lineNum)
 	}
 
-	// Mark fields needing double quote unescaping based on postProcChunks
-	if len(sr.postProcChunks) > 0 {
-		postProcessFields(buf, result, sr.postProcChunks)
+	// Mark fields needing double quote unescaping based on chunkHasDQ
+	if sr.chunkHasDQ != nil {
+		postProcessFields(result, sr.chunkHasDQ)
 	}
 
 	return result
@@ -314,22 +314,17 @@ func finalizeLastField(buf []byte, state *parserState, result *parseResult, curr
 }
 
 // postProcessFields marks fields needing double quote unescaping.
-// Fields that overlap with chunks listed in postProcChunks are flagged.
-func postProcessFields(_ []byte, result *parseResult, postProcChunks []int) {
-	if len(postProcChunks) == 0 {
+// Fields that overlap with chunks marked in chunkHasDQ are flagged.
+func postProcessFields(result *parseResult, chunkHasDQ []bool) {
+	if len(chunkHasDQ) == 0 {
 		return
-	}
-
-	chunkSet := make(map[int]struct{}, len(postProcChunks))
-	for _, idx := range postProcChunks {
-		chunkSet[idx] = struct{}{}
 	}
 
 	for i := range result.fields {
 		f := &result.fields[i]
 
 		startChunk := int(uint64(f.start) / simdChunkSize)
-		if _, ok := chunkSet[startChunk]; ok {
+		if startChunk < len(chunkHasDQ) && chunkHasDQ[startChunk] {
 			f.setNeedsUnescape(true)
 			continue
 		}
@@ -337,8 +332,8 @@ func postProcessFields(_ []byte, result *parseResult, postProcChunks []int) {
 		if f.length > 0 {
 			endChunk := int((uint64(f.start) + uint64(f.length) - 1) / simdChunkSize)
 			if endChunk != startChunk {
-				for c := startChunk; c <= endChunk; c++ {
-					if _, ok := chunkSet[c]; ok {
+				for c := startChunk; c <= endChunk && c < len(chunkHasDQ); c++ {
+					if chunkHasDQ[c] {
 						f.setNeedsUnescape(true)
 						break
 					}

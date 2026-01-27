@@ -15,8 +15,25 @@ package simdcsv
 func (r *Reader) buildRecordWithValidation(row rowInfo, rowIdx int) ([]string, error) {
 	fieldCount := row.fieldCount
 
-	// Reuse buffers
-	r.recordBuffer = r.recordBuffer[:0]
+	// Pre-reserve recordBuffer based on row's raw length to reduce reallocations
+	if fieldCount > 0 && row.firstField < len(r.parseResult.fields) {
+		lastFieldIdx := row.firstField + fieldCount - 1
+		if lastFieldIdx < len(r.parseResult.fields) {
+			firstField := r.parseResult.fields[row.firstField]
+			lastField := r.parseResult.fields[lastFieldIdx]
+			rowRawLen := int(lastField.rawEnd() - firstField.rawStart())
+			if cap(r.recordBuffer) < rowRawLen {
+				r.recordBuffer = make([]byte, 0, rowRawLen)
+			} else {
+				r.recordBuffer = r.recordBuffer[:0]
+			}
+		} else {
+			r.recordBuffer = r.recordBuffer[:0]
+		}
+	} else {
+		r.recordBuffer = r.recordBuffer[:0]
+	}
+
 	if cap(r.fieldEnds) < fieldCount {
 		r.fieldEnds = make([]int, 0, fieldCount)
 	}
@@ -40,8 +57,8 @@ func (r *Reader) buildRecordWithValidation(row rowInfo, rowIdx int) ([]string, e
 		// Get raw field data for validation
 		rawStart, rawEnd := r.getFieldRawBounds(fieldIdx)
 
-		// Validate quotes unless LazyQuotes is enabled
-		if !r.LazyQuotes {
+		// Validate quotes unless LazyQuotes is enabled or no quotes exist in input
+		if !r.LazyQuotes && r.hasQuotes {
 			if err := r.validateFieldQuotes(rawStart, rawEnd, row.lineNum); err != nil {
 				// Build partial record from accumulated content
 				return r.buildPartialRecord(i), err
@@ -88,6 +105,17 @@ func (r *Reader) buildPartialRecord(errorFieldIdx int) []string {
 
 // appendFieldContent appends field content to recordBuffer with inline unescape and CRLF handling.
 func (r *Reader) appendFieldContent(field fieldInfo, rawStart, rawEnd uint64) {
+	// Fast path: no quotes in entire input means no unescape/CRLF handling needed
+	// (CRLF inside fields only occurs in quoted fields, so hasQuotes=false implies no field-internal CRLF)
+	if !r.hasQuotes {
+		content := r.getFieldContent(field)
+		if r.TrimLeadingSpace {
+			content = trimLeftBytes(content)
+		}
+		r.recordBuffer = append(r.recordBuffer, content...)
+		return
+	}
+
 	// Handle TrimLeadingSpace for quoted fields with leading whitespace
 	if r.TrimLeadingSpace && rawStart < uint64(len(r.rawBuffer)) {
 		raw := r.rawBuffer[rawStart:]

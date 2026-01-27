@@ -732,12 +732,12 @@ func TestDoubleQuoteUnescape(t *testing.T) {
 		// containing double quotes
 		buf := []byte("\"He said \"\"Hi\"\"\",normal\n")
 
-		// Scan would mark chunks with double quotes in postProcChunks
+		// Scan would mark chunks with double quotes in chunkHasDQ
 		sr := &scanResult{
 			quoteMasks:     []uint64{(1 << 0) | (1 << 14)}, // outer quotes
 			separatorMasks: []uint64{1 << 15},
 			newlineMasks:   []uint64{1 << 22},
-			postProcChunks: []int{0}, // chunk 0 has double quotes
+			chunkHasDQ:     []bool{true}, // chunk 0 has double quotes
 			chunkCount:     1,
 			lastChunkBits:  23,
 		}
@@ -764,7 +764,7 @@ func TestDoubleQuoteUnescape(t *testing.T) {
 			quoteMasks:     []uint64{(1 << 0) | (1 << 5)}, // outer quotes at 0 and 5 (inner "" at 2,3 removed by Scan)
 			separatorMasks: []uint64{0},
 			newlineMasks:   []uint64{1 << 6},
-			postProcChunks: []int{0},
+			chunkHasDQ:     []bool{true},
 			chunkCount:     1,
 			lastChunkBits:  7,
 		}

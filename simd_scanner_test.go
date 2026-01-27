@@ -837,85 +837,85 @@ func TestSkipNextQuoteFlag(t *testing.T) {
 
 func TestScanBuffer(t *testing.T) {
 	tests := []struct {
-		name               string
-		input              []byte
-		separator          byte
-		wantChunkCount     int
-		wantPostProcChunks []int // chunks that need post-processing (have escaped quotes)
-		wantFinalQuoted    bool  // should we end in quoted state?
-		description        string
+		name            string
+		input           []byte
+		separator       byte
+		wantChunkCount  int
+		wantChunkHasDQ  []bool // per-chunk flags for chunks that have escaped quotes
+		wantFinalQuoted bool   // should we end in quoted state?
+		description     string
 	}{
 		{
-			name:               "single_chunk_simple",
-			input:              []byte("a,b,c\nd,e,f\n"),
-			separator:          ',',
-			wantChunkCount:     1,
-			wantPostProcChunks: nil,
-			wantFinalQuoted:    false,
-			description:        "Simple CSV fitting in one chunk",
+			name:            "single_chunk_simple",
+			input:           []byte("a,b,c\nd,e,f\n"),
+			separator:       ',',
+			wantChunkCount:  1,
+			wantChunkHasDQ:  []bool{false},
+			wantFinalQuoted: false,
+			description:     "Simple CSV fitting in one chunk",
 		},
 		{
-			name:               "single_chunk_quoted",
-			input:              []byte(`"a","b","c"` + "\n"),
-			separator:          ',',
-			wantChunkCount:     1,
-			wantPostProcChunks: nil,
-			wantFinalQuoted:    false,
-			description:        "Quoted fields in one chunk",
+			name:            "single_chunk_quoted",
+			input:           []byte(`"a","b","c"` + "\n"),
+			separator:       ',',
+			wantChunkCount:  1,
+			wantChunkHasDQ:  []bool{false},
+			wantFinalQuoted: false,
+			description:     "Quoted fields in one chunk",
 		},
 		{
-			name:               "single_chunk_escaped",
-			input:              []byte(`"a""b","c"` + "\n"),
-			separator:          ',',
-			wantChunkCount:     1,
-			wantPostProcChunks: []int{0}, // chunk 0 has escaped quote
-			wantFinalQuoted:    false,
-			description:        "Escaped quote in one chunk",
+			name:            "single_chunk_escaped",
+			input:           []byte(`"a""b","c"` + "\n"),
+			separator:       ',',
+			wantChunkCount:  1,
+			wantChunkHasDQ:  []bool{true}, // chunk 0 has escaped quote
+			wantFinalQuoted: false,
+			description:     "Escaped quote in one chunk",
 		},
 		{
-			name:               "two_chunks_simple",
-			input:              append(make([]byte, 64), []byte("a,b,c\n")...),
-			separator:          ',',
-			wantChunkCount:     2,
-			wantPostProcChunks: nil,
-			wantFinalQuoted:    false,
-			description:        "Two chunks, simple content",
+			name:            "two_chunks_simple",
+			input:           append(make([]byte, 64), []byte("a,b,c\n")...),
+			separator:       ',',
+			wantChunkCount:  2,
+			wantChunkHasDQ:  []bool{false, false},
+			wantFinalQuoted: false,
+			description:     "Two chunks, simple content",
 		},
 		{
-			name:               "multiple_chunks",
-			input:              make([]byte, 200), // 200 bytes = 4 chunks (64+64+64+8)
-			separator:          ',',
-			wantChunkCount:     4,
-			wantPostProcChunks: nil,
-			wantFinalQuoted:    false,
-			description:        "Multiple full and partial chunks",
+			name:            "multiple_chunks",
+			input:           make([]byte, 200), // 200 bytes = 4 chunks (64+64+64+8)
+			separator:       ',',
+			wantChunkCount:  4,
+			wantChunkHasDQ:  []bool{false, false, false, false},
+			wantFinalQuoted: false,
+			description:     "Multiple full and partial chunks",
 		},
 		{
-			name:               "exact_64_bytes",
-			input:              make([]byte, 64),
-			separator:          ',',
-			wantChunkCount:     1,
-			wantPostProcChunks: nil,
-			wantFinalQuoted:    false,
-			description:        "Exactly 64 bytes (one full chunk)",
+			name:            "exact_64_bytes",
+			input:           make([]byte, 64),
+			separator:       ',',
+			wantChunkCount:  1,
+			wantChunkHasDQ:  []bool{false},
+			wantFinalQuoted: false,
+			description:     "Exactly 64 bytes (one full chunk)",
 		},
 		{
-			name:               "exact_128_bytes",
-			input:              make([]byte, 128),
-			separator:          ',',
-			wantChunkCount:     2,
-			wantPostProcChunks: nil,
-			wantFinalQuoted:    false,
-			description:        "Exactly 128 bytes (two full chunks)",
+			name:            "exact_128_bytes",
+			input:           make([]byte, 128),
+			separator:       ',',
+			wantChunkCount:  2,
+			wantChunkHasDQ:  []bool{false, false},
+			wantFinalQuoted: false,
+			description:     "Exactly 128 bytes (two full chunks)",
 		},
 		{
-			name:               "unclosed_quote",
-			input:              []byte(`"unclosed`),
-			separator:          ',',
-			wantChunkCount:     1,
-			wantPostProcChunks: nil,
-			wantFinalQuoted:    true, // quote at position 0 never closed
-			description:        "Unclosed quote should leave quoted state true",
+			name:            "unclosed_quote",
+			input:           []byte(`"unclosed`),
+			separator:       ',',
+			wantChunkCount:  1,
+			wantChunkHasDQ:  []bool{false},
+			wantFinalQuoted: true, // quote at position 0 never closed
+			description:     "Unclosed quote should leave quoted state true",
 		},
 	}
 
@@ -942,9 +942,9 @@ func TestScanBuffer(t *testing.T) {
 					tt.description, len(result.newlineMasks), tt.wantChunkCount)
 			}
 
-			if !equalSlices(result.postProcChunks, tt.wantPostProcChunks) {
-				t.Errorf("%s: postProcChunks = %v, want %v",
-					tt.description, result.postProcChunks, tt.wantPostProcChunks)
+			if !equalBoolSlices(result.chunkHasDQ, tt.wantChunkHasDQ) {
+				t.Errorf("%s: chunkHasDQ = %v, want %v",
+					tt.description, result.chunkHasDQ, tt.wantChunkHasDQ)
 			}
 
 			gotFinalQuoted := result.finalQuoted != 0
@@ -1206,6 +1206,18 @@ func equalSlices(a, b []int) bool {
 	if len(a) == 0 && len(b) == 0 {
 		return true
 	}
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func equalBoolSlices(a, b []bool) bool {
 	if len(a) != len(b) {
 		return false
 	}
