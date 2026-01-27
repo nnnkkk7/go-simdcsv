@@ -44,71 +44,84 @@ func (r *Reader) validateFieldQuotesWithField(field fieldInfo, rawStart, rawEnd 
 		return nil
 	}
 
-	isQuoted, quoteOffset := isQuotedFieldStart(raw, r.TrimLeadingSpace)
+	// Fast path: use isQuoted flag from parsed field metadata (set during SIMD scan)
+	// Skip this optimization when TrimLeadingSpace is true because the field metadata
+	// doesn't account for the leading whitespace offset correctly.
+	if field.flags&fieldFlagIsQuoted != 0 && !r.TrimLeadingSpace {
+		// Field was parsed as quoted - validate structure
+		return r.validateQuotedFieldFromMetadata(raw, rawStart, field, lineNum)
+	}
 
+	// Check for quote at start (handles TrimLeadingSpace case)
+	isQuoted, quoteOffset := isQuotedFieldStart(raw, r.TrimLeadingSpace)
 	if isQuoted {
-		// Adjust raw to start from the quote for validation
 		adjustedRaw := raw[quoteOffset:]
-		adjustedStart := rawStart + uint64(quoteOffset) //nolint:gosec // G115: quoteOffset is always non-negative from isQuotedFieldStart
-		// Fast path: use parsed field metadata when opening quote is at start
-		if quoteOffset == 0 && field.rawEndDelta != 0 {
-			if err := r.validateQuotedFieldFast(adjustedRaw, adjustedStart, field, lineNum); err != nil {
-				return err
-			}
-			return nil
-		}
+		adjustedStart := rawStart + uint64(quoteOffset) //nolint:gosec // G115: quoteOffset is always non-negative
 		return r.validateQuotedField(adjustedRaw, adjustedStart, lineNum)
 	}
 
 	return r.validateUnquotedField(raw, rawStart, lineNum)
 }
 
-// validateQuotedFieldFast validates a quoted field using parsed metadata to avoid rescanning.
-// raw must start with the opening quote.
-func (r *Reader) validateQuotedFieldFast(raw []byte, rawStart uint64, field fieldInfo, lineNum int) error {
-	if len(raw) < 2 || raw[0] != '"' {
-		return r.validateQuotedField(raw, rawStart, lineNum)
+// validateQuotedFieldFromMetadata validates a quoted field using SIMD-parsed metadata.
+// This avoids re-scanning for quotes since the parser already identified the structure.
+// raw is the full field content including quotes; rawStart is its absolute position.
+func (r *Reader) validateQuotedFieldFromMetadata(raw []byte, rawStart uint64, field fieldInfo, lineNum int) error {
+	// The field was parsed as quoted, so we trust the opening quote exists
+	// Just verify the structure is valid
+	if len(raw) < 2 {
+		return &ParseError{
+			StartLine: lineNum,
+			Line:      lineNum,
+			Column:    int(rawStart) + len(raw), //nolint:gosec // G115
+			Err:       ErrQuote,
+		}
 	}
 
+	// Verify opening quote
+	if raw[0] != '"' {
+		return &ParseError{
+			StartLine: lineNum,
+			Line:      lineNum,
+			Column:    int(rawStart) + 1, //nolint:gosec // G115
+			Err:       ErrQuote,
+		}
+	}
+
+	// Calculate expected closing quote position from metadata
+	// field.length is content length (between quotes), so closing quote is at length + 1
 	closingIdx := int(field.length) + 1
-	if closingIdx >= len(raw) || raw[closingIdx] != '"' {
-		// No closing quote found at expected position
+	if closingIdx >= len(raw) {
 		return &ParseError{
 			StartLine: lineNum,
 			Line:      lineNum,
-			Column:    int(rawStart) + len(raw), //nolint:gosec // G115: rawStart bounded by buffer size
+			Column:    int(rawStart) + len(raw), //nolint:gosec // G115
 			Err:       ErrQuote,
 		}
 	}
 
-	switch field.rawEndDelta {
-	case 1:
-		// Closing quote should be immediately before delimiter/EOF.
-		if closingIdx+1 != len(raw) {
-			return &ParseError{
-				StartLine: lineNum,
-				Line:      lineNum,
-				Column:    int(rawStart) + closingIdx + 2, //nolint:gosec // G115: rawStart bounded by buffer size
-				Err:       ErrQuote,
-			}
-		}
-	case 2:
-		// CRLF: raw includes trailing \r before the delimiter LF.
-		if closingIdx+2 != len(raw) || raw[closingIdx+1] != '\r' {
-			return &ParseError{
-				StartLine: lineNum,
-				Line:      lineNum,
-				Column:    int(rawStart) + closingIdx + 2, //nolint:gosec // G115: rawStart bounded by buffer size
-				Err:       ErrQuote,
-			}
-		}
-	default:
-		// Extra data after closing quote (invalid)
+	// Verify closing quote at expected position
+	if raw[closingIdx] != '"' {
 		return &ParseError{
 			StartLine: lineNum,
 			Line:      lineNum,
-			Column:    int(rawStart) + closingIdx + 2, //nolint:gosec // G115: rawStart bounded by buffer size
+			Column:    int(rawStart) + closingIdx + 1, //nolint:gosec // G115
 			Err:       ErrQuote,
+		}
+	}
+
+	// Validate that nothing unexpected comes after closing quote
+	afterClose := closingIdx + 1
+	if afterClose < len(raw) {
+		nextChar := raw[afterClose]
+		// Allow only field terminators (comma, newline, CR)
+		if !isFieldTerminator(nextChar, r.Comma) {
+			return &ParseError{
+				StartLine: lineNum,
+				Line:      lineNum,
+				Column:    int(rawStart) + afterClose + 1, //nolint:gosec // G115
+				Err:       ErrQuote,
+			}
 		}
 	}
 
