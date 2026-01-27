@@ -5,6 +5,7 @@ package simdcsv
 import (
 	"math/bits"
 	"simd/archsimd"
+	"sync"
 	"unsafe"
 
 	"golang.org/x/sys/cpu"
@@ -59,10 +60,10 @@ const (
 	simdMinThreshold = 32
 
 	// avgFieldLenEstimate is the estimated average field length for capacity pre-allocation.
-	avgFieldLenEstimate = 10
+	avgFieldLenEstimate = 15
 
 	// avgRowLenEstimate is the estimated average row length for capacity pre-allocation.
-	avgRowLenEstimate = 50
+	avgRowLenEstimate = 80
 )
 
 func init() {
@@ -97,6 +98,45 @@ type scanResult struct {
 	finalQuoted    uint64   // Final quote state
 	chunkCount     int      // Number of processed chunks
 	lastChunkBits  int      // Valid bits in last chunk (if < 64)
+}
+
+// scanResultPoolCapacity is the pre-allocated slice capacity for pooled scanResult objects.
+// 1024 chunks = ~64KB input (1024 * 64 bytes per chunk).
+const scanResultPoolCapacity = 1024
+
+// scanResultPool provides reusable scanResult objects to reduce allocations.
+var scanResultPool = sync.Pool{
+	New: func() interface{} {
+		return &scanResult{
+			quoteMasks:     make([]uint64, 0, scanResultPoolCapacity),
+			separatorMasks: make([]uint64, 0, scanResultPoolCapacity),
+			newlineMasks:   make([]uint64, 0, scanResultPoolCapacity),
+			chunkHasDQ:     make([]bool, 0, scanResultPoolCapacity),
+		}
+	},
+}
+
+// reset clears the scanResult for reuse while preserving underlying slice capacity.
+func (sr *scanResult) reset() {
+	sr.quoteMasks = sr.quoteMasks[:0]
+	sr.separatorMasks = sr.separatorMasks[:0]
+	sr.newlineMasks = sr.newlineMasks[:0]
+	if cap(sr.chunkHasDQ) > 0 {
+		sr.chunkHasDQ = sr.chunkHasDQ[:0]
+	}
+	sr.hasQuotes = false
+	sr.finalQuoted = 0
+	sr.chunkCount = 0
+	sr.lastChunkBits = 0
+}
+
+// releaseScanResult returns a scanResult to the pool for reuse.
+// The caller must not use the scanResult after calling this function.
+func releaseScanResult(sr *scanResult) {
+	if sr != nil {
+		sr.reset()
+		scanResultPool.Put(sr)
+	}
 }
 
 // generateMasks generates 4 types of masks from a simdChunkSize-byte chunk.
@@ -304,12 +344,53 @@ func scanBuffer(buf []byte, separatorChar byte) *scanResult {
 	}
 
 	chunkCount := (len(buf) + simdChunkSize - 1) / simdChunkSize
-	result := &scanResult{
-		quoteMasks:     make([]uint64, 0, chunkCount),
-		separatorMasks: make([]uint64, 0, chunkCount),
-		newlineMasks:   make([]uint64, 0, chunkCount),
-		chunkHasDQ:     make([]bool, chunkCount),
-		chunkCount:     chunkCount,
+
+	// Get a scanResult from the pool and reset it for reuse
+	result := scanResultPool.Get().(*scanResult)
+	result.reset()
+	result.chunkCount = chunkCount
+
+	// Pre-size all mask slices to chunkCount for index-based assignment (avoids append overhead)
+	// When capacity is insufficient, grow by 2x to reduce future reallocations
+	if cap(result.quoteMasks) < chunkCount {
+		newCap := chunkCount
+		if newCap < cap(result.quoteMasks)*2 {
+			newCap = cap(result.quoteMasks) * 2
+		}
+		result.quoteMasks = make([]uint64, chunkCount, newCap)
+	} else {
+		result.quoteMasks = result.quoteMasks[:chunkCount]
+	}
+	if cap(result.separatorMasks) < chunkCount {
+		newCap := chunkCount
+		if newCap < cap(result.separatorMasks)*2 {
+			newCap = cap(result.separatorMasks) * 2
+		}
+		result.separatorMasks = make([]uint64, chunkCount, newCap)
+	} else {
+		result.separatorMasks = result.separatorMasks[:chunkCount]
+	}
+	if cap(result.newlineMasks) < chunkCount {
+		newCap := chunkCount
+		if newCap < cap(result.newlineMasks)*2 {
+			newCap = cap(result.newlineMasks) * 2
+		}
+		result.newlineMasks = make([]uint64, chunkCount, newCap)
+	} else {
+		result.newlineMasks = result.newlineMasks[:chunkCount]
+	}
+	if cap(result.chunkHasDQ) < chunkCount {
+		newCap := chunkCount
+		if newCap < cap(result.chunkHasDQ)*2 {
+			newCap = cap(result.chunkHasDQ) * 2
+		}
+		result.chunkHasDQ = make([]bool, chunkCount, newCap)
+	} else {
+		result.chunkHasDQ = result.chunkHasDQ[:chunkCount]
+		// Clear the slice (reset only truncates, doesn't zero)
+		for i := range result.chunkHasDQ {
+			result.chunkHasDQ[i] = false
+		}
 	}
 
 	state := scanState{}
@@ -411,10 +492,10 @@ func scanBuffer(buf []byte, separatorChar byte) *scanResult {
 		// Restore end state for the next chunk
 		state.quoted = endQuoted
 
-		// Store results
-		result.quoteMasks = append(result.quoteMasks, quoteMaskOut)
-		result.separatorMasks = append(result.separatorMasks, sepMaskOut)
-		result.newlineMasks = append(result.newlineMasks, newlineMaskOut)
+		// Store results using index assignment (pre-sized slices)
+		result.quoteMasks[chunkIdx] = quoteMaskOut
+		result.separatorMasks[chunkIdx] = sepMaskOut
+		result.newlineMasks[chunkIdx] = newlineMaskOut
 
 		// Track if any quotes exist in the input (for fast path optimization)
 		if quoteMaskOut != 0 {

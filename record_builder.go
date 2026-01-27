@@ -3,9 +3,27 @@
 //nolint:gosec // G115: Integer conversions are safe - buffer size bounded by DefaultMaxInputSize (2GB)
 package simdcsv
 
+import (
+	"math/bits"
+)
+
 // =============================================================================
 // Record Building - Functions for constructing records from parsed data
 // =============================================================================
+
+// Buffer allocation constants for reducing reallocations in hot path
+const (
+	// minRecordBufferSize is the minimum capacity for recordBuffer to avoid small reallocations.
+	// 4KB covers most typical CSV rows.
+	minRecordBufferSize = 4 * 1024
+
+	// minFieldEndsSize is the minimum capacity for fieldEnds slice.
+	// 32 fields covers most typical CSV files.
+	minFieldEndsSize = 32
+
+	// minFieldPositionsSize is the minimum capacity for fieldPositions slice.
+	minFieldPositionsSize = 32
+)
 
 // buildRecordWithValidation constructs a []string record from a rowInfo with quote validation.
 //
@@ -15,18 +33,15 @@ package simdcsv
 func (r *Reader) buildRecordWithValidation(row rowInfo, rowIdx int) ([]string, error) {
 	fieldCount := row.fieldCount
 
-	// Pre-reserve recordBuffer based on row's raw length to reduce reallocations
+	// Pre-reserve recordBuffer based on row's raw length to reduce reallocations.
+	// Use exponential growth with minimum size to avoid frequent small reallocations.
 	if fieldCount > 0 && row.firstField < len(r.parseResult.fields) {
 		lastFieldIdx := row.firstField + fieldCount - 1
 		if lastFieldIdx < len(r.parseResult.fields) {
 			firstField := r.parseResult.fields[row.firstField]
 			lastField := r.parseResult.fields[lastFieldIdx]
 			rowRawLen := int(lastField.rawEnd() - firstField.rawStart())
-			if cap(r.recordBuffer) < rowRawLen {
-				r.recordBuffer = make([]byte, 0, rowRawLen)
-			} else {
-				r.recordBuffer = r.recordBuffer[:0]
-			}
+			r.recordBuffer = r.ensureRecordBufferCapacity(rowRawLen)
 		} else {
 			r.recordBuffer = r.recordBuffer[:0]
 		}
@@ -34,28 +49,23 @@ func (r *Reader) buildRecordWithValidation(row rowInfo, rowIdx int) ([]string, e
 		r.recordBuffer = r.recordBuffer[:0]
 	}
 
-	if cap(r.fieldEnds) < fieldCount {
-		r.fieldEnds = make([]int, 0, fieldCount)
-	}
-	r.fieldEnds = r.fieldEnds[:0]
+	// Ensure fieldEnds has sufficient capacity with exponential growth
+	r.fieldEnds = r.ensureFieldEndsCapacity(fieldCount)
 
-	// Reuse fieldPositions slice if capacity is sufficient
-	if cap(r.fieldPositions) >= fieldCount {
-		r.fieldPositions = r.fieldPositions[:fieldCount]
-	} else {
-		r.fieldPositions = make([]position, fieldCount)
-	}
+	// Ensure fieldPositions has sufficient capacity with exponential growth
+	r.fieldPositions = r.ensureFieldPositionsCapacity(fieldCount)
 
 	// Phase 1: Accumulate all field content into recordBuffer
-	for i := 0; i < fieldCount; i++ {
-		fieldIdx := row.firstField + i
-		if fieldIdx >= len(r.parseResult.fields) {
-			break
-		}
-		field := r.parseResult.fields[fieldIdx]
+	// Bounds check once at start to avoid per-iteration check
+	endIdx := row.firstField + fieldCount
+	if endIdx > len(r.parseResult.fields) {
+		endIdx = len(r.parseResult.fields)
+	}
+	fields := r.parseResult.fields[row.firstField:endIdx]
 
-		// Get raw field data for validation
-		rawStart, rawEnd := r.getFieldRawBounds(fieldIdx)
+	for i, field := range fields {
+		// Get raw field bounds directly from field (inlined from getFieldRawBounds)
+		rawStart, rawEnd := uint64(field.rawStart()), uint64(field.rawEnd())
 
 		// Validate quotes unless LazyQuotes is enabled or no quotes exist in input
 		if !r.LazyQuotes && r.hasQuotes {
@@ -192,9 +202,43 @@ func trimLeftBytes(b []byte) []byte {
 	return b
 }
 
-// containsCRLFBytes checks if byte slice contains CRLF sequence.
+// containsCRLFBytes checks if byte slice contains CRLF sequence using SIMD when available.
 func containsCRLFBytes(b []byte) bool {
-	for i := 0; i < len(b)-1; i++ {
+	if len(b) < 2 {
+		return false
+	}
+
+	// For longer inputs, use SIMD to find CR characters quickly
+	if len(b) >= simdChunkSize {
+		// Use the existing mask generation to find CR positions
+		for i := 0; i <= len(b)-simdChunkSize; i += simdChunkSize {
+			chunk := b[i : i+simdChunkSize]
+			_, _, crMask, _ := generateMasks(chunk, ',') // separator doesn't matter here
+			if crMask != 0 {
+				// Found CR, check if followed by LF
+				for crMask != 0 {
+					pos := bits.TrailingZeros64(crMask)
+					absPos := i + pos
+					if absPos+1 < len(b) && b[absPos+1] == '\n' {
+						return true
+					}
+					crMask &= crMask - 1
+				}
+			}
+		}
+	}
+
+	// Scalar fallback for remaining bytes (handles tail and small inputs)
+	startPos := 0
+	if len(b) >= simdChunkSize {
+		// Start from where SIMD left off
+		startPos = (len(b) / simdChunkSize) * simdChunkSize
+		// Need to check one byte before startPos in case CR was at boundary
+		if startPos > 0 {
+			startPos--
+		}
+	}
+	for i := startPos; i < len(b)-1; i++ {
 		if b[i] == '\r' && b[i+1] == '\n' {
 			return true
 		}
@@ -213,4 +257,71 @@ func (r *Reader) allocateRecord(fieldCount int) []string {
 		r.lastRecord = record
 	}
 	return record
+}
+
+// =============================================================================
+// Buffer Capacity Management - Helper functions for efficient buffer reuse
+// =============================================================================
+
+// ensureRecordBufferCapacity ensures recordBuffer has at least the required capacity.
+// Uses exponential growth with a minimum size to reduce reallocations.
+// Returns the buffer reset to zero length.
+func (r *Reader) ensureRecordBufferCapacity(required int) []byte {
+	if cap(r.recordBuffer) >= required {
+		return r.recordBuffer[:0]
+	}
+
+	// Calculate new capacity with exponential growth (2x current capacity)
+	newCap := cap(r.recordBuffer) * 2
+	if newCap < minRecordBufferSize {
+		newCap = minRecordBufferSize
+	}
+	if newCap < required {
+		newCap = required
+	}
+
+	r.recordBuffer = make([]byte, 0, newCap)
+	return r.recordBuffer
+}
+
+// ensureFieldEndsCapacity ensures fieldEnds has at least the required capacity.
+// Uses exponential growth with a minimum size to reduce reallocations.
+// Returns the slice reset to zero length.
+func (r *Reader) ensureFieldEndsCapacity(required int) []int {
+	if cap(r.fieldEnds) >= required {
+		return r.fieldEnds[:0]
+	}
+
+	// Calculate new capacity with exponential growth (2x current capacity)
+	newCap := cap(r.fieldEnds) * 2
+	if newCap < minFieldEndsSize {
+		newCap = minFieldEndsSize
+	}
+	if newCap < required {
+		newCap = required
+	}
+
+	r.fieldEnds = make([]int, 0, newCap)
+	return r.fieldEnds
+}
+
+// ensureFieldPositionsCapacity ensures fieldPositions has at least the required capacity.
+// Uses exponential growth with a minimum size to reduce reallocations.
+// Returns the slice with length set to required.
+func (r *Reader) ensureFieldPositionsCapacity(required int) []position {
+	if cap(r.fieldPositions) >= required {
+		return r.fieldPositions[:required]
+	}
+
+	// Calculate new capacity with exponential growth (2x current capacity)
+	newCap := cap(r.fieldPositions) * 2
+	if newCap < minFieldPositionsSize {
+		newCap = minFieldPositionsSize
+	}
+	if newCap < required {
+		newCap = required
+	}
+
+	r.fieldPositions = make([]position, required, newCap)
+	return r.fieldPositions
 }

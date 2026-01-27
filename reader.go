@@ -165,6 +165,39 @@ func (r *Reader) Read() (record []string, err error) {
 	}
 }
 
+// readAllWithPool reads all data from r using a pooled buffer.
+// If initialCap > 0, it pre-allocates a buffer of that size for efficiency.
+// Returns a slice that may be from the pool (caller should return via releaseRawBuffer).
+func readAllWithPool(r io.Reader, initialCap int64) ([]byte, error) {
+	// Try to get size from common reader types that support it
+	if initialCap == 0 {
+		switch sr := r.(type) {
+		case interface{ Len() int }:
+			// strings.Reader, bytes.Reader, bytes.Buffer
+			initialCap = int64(sr.Len())
+		case interface{ Size() int64 }:
+			// strings.Reader also has Size()
+			initialCap = sr.Size()
+		}
+	}
+
+	// If we know the exact size, allocate directly (most efficient)
+	if initialCap > 0 {
+		buf := make([]byte, initialCap)
+		n, err := io.ReadFull(r, buf)
+		if err == io.ErrUnexpectedEOF || err == io.EOF {
+			return buf[:n], nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		return buf[:n], nil
+	}
+
+	// Fallback: size unknown, use io.ReadAll
+	return io.ReadAll(r)
+}
+
 // initialize reads all input and runs scanBuffer and parseBuffer processing.
 func (r *Reader) initialize() error {
 	r.initialized = true
@@ -175,12 +208,21 @@ func (r *Reader) initialize() error {
 		maxSize = DefaultMaxInputSize
 	}
 
+	// Try to determine input size for pre-allocation if reader supports seeking
+	var initialCap int64
+	if seeker, ok := r.r.(io.Seeker); ok {
+		if size, err := seeker.Seek(0, io.SeekEnd); err == nil {
+			initialCap = size
+			_, _ = seeker.Seek(0, io.SeekStart)
+		}
+	}
+
 	// Read entire input into rawBuffer with size limit
 	var err error
 	if maxSize > 0 {
 		// Use LimitReader to enforce size limit
 		limited := io.LimitReader(r.r, maxSize+1)
-		r.rawBuffer, err = io.ReadAll(limited)
+		r.rawBuffer, err = readAllWithPool(limited, initialCap)
 		if err != nil {
 			return err
 		}
@@ -189,7 +231,7 @@ func (r *Reader) initialize() error {
 		}
 	} else {
 		// No limit (maxSize == -1)
-		r.rawBuffer, err = io.ReadAll(r.r)
+		r.rawBuffer, err = readAllWithPool(r.r, initialCap)
 		if err != nil {
 			return err
 		}
@@ -202,12 +244,10 @@ func (r *Reader) initialize() error {
 		}
 	}
 
-	// Empty input: no records
+	// Empty input: no records (use pool for consistency)
 	if len(r.rawBuffer) == 0 {
-		r.parseResult = &parseResult{
-			fields: nil,
-			rows:   nil,
-		}
+		r.parseResult = parseResultPool.Get().(*parseResult)
+		r.parseResult.reset()
 		return nil
 	}
 
@@ -221,6 +261,10 @@ func (r *Reader) initialize() error {
 	// Parse: extract fields and rows from scan result
 	// Note: parseBuffer already calls postProcessFields internally
 	r.parseResult = parseBuffer(r.rawBuffer, r.scanResult)
+
+	// Release scanResult back to pool (no longer needed after parsing)
+	releaseScanResult(r.scanResult)
+	r.scanResult = nil
 
 	// Update offset to end of buffer
 	r.offset = int64(len(r.rawBuffer))
@@ -265,6 +309,20 @@ func (r *Reader) FieldPos(field int) (line, column int) {
 // read row and the beginning of the next row.
 func (r *Reader) InputOffset() int64 {
 	return r.offset
+}
+
+// Release releases internal resources back to their pools.
+// After calling Release, the Reader should not be used anymore.
+// This is optional - resources will be garbage collected if not released,
+// but calling Release allows immediate reuse of pooled buffers.
+func (r *Reader) Release() {
+	releaseParseResult(r.parseResult)
+	r.parseResult = nil
+	r.rawBuffer = nil
+	r.fieldPositions = nil
+	r.lastRecord = nil
+	r.recordBuffer = nil
+	r.fieldEnds = nil
 }
 
 // ReaderOptions contains extended configuration options for [Reader].

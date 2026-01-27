@@ -18,7 +18,12 @@ func ParseBytes(data []byte, comma rune) ([][]string, error) {
 	pr := parseBuffer(data, sr)
 
 	// Build: Convert parseResult to [][]string
-	return buildRecords(data, pr), nil
+	records := buildRecords(data, pr)
+
+	// Release parseResult back to pool
+	releaseParseResult(pr)
+
+	return records, nil
 }
 
 // ParseBytesStreaming parses data using a streaming callback function.
@@ -35,6 +40,7 @@ func ParseBytesStreaming(data []byte, comma rune, callback func([]string) error)
 
 	// Parse: Extract fields and rows from scan result
 	pr := parseBuffer(data, sr)
+	defer releaseParseResult(pr)
 
 	if pr == nil || len(pr.rows) == 0 {
 		return nil
