@@ -66,6 +66,7 @@ type Reader struct {
 	nonCommentRecordCount int          // Count of non-comment records returned (for O(1) first record detection)
 	initialized           bool         // Whether scan/parse have been run
 	hasQuotes             bool         // True if input contains any quote characters (for fast path)
+	chunkHasQuote         []bool       // Per-chunk quote presence (for validation fast path)
 
 	// Extended options (set via NewReaderWithOptions)
 	skipBOM      bool  // Skip UTF-8 BOM if present
@@ -257,6 +258,17 @@ func (r *Reader) initialize() error {
 
 	// Copy hasQuotes flag for fast path optimization
 	r.hasQuotes = r.scanResult.hasQuotes
+	// Copy per-chunk quote presence for validation fast path
+	if len(r.scanResult.chunkHasQuote) > 0 {
+		if cap(r.chunkHasQuote) < len(r.scanResult.chunkHasQuote) {
+			r.chunkHasQuote = make([]bool, len(r.scanResult.chunkHasQuote))
+		} else {
+			r.chunkHasQuote = r.chunkHasQuote[:len(r.scanResult.chunkHasQuote)]
+		}
+		copy(r.chunkHasQuote, r.scanResult.chunkHasQuote)
+	} else {
+		r.chunkHasQuote = nil
+	}
 
 	// Parse: extract fields and rows from scan result
 	// Note: parseBuffer already calls postProcessFields internally
@@ -278,6 +290,13 @@ func (r *Reader) initialize() error {
 // Because ReadAll is defined to read until EOF, it does not
 // treat end of file as an error to be reported.
 func (r *Reader) ReadAll() (records [][]string, err error) {
+	if !r.initialized {
+		if err := r.initialize(); err != nil {
+			return nil, err
+		}
+	}
+	// Defer allocation until we actually have a record
+	// This ensures empty input returns nil (matching encoding/csv behavior)
 	for {
 		record, err := r.Read()
 		if err == io.EOF {
@@ -285,6 +304,9 @@ func (r *Reader) ReadAll() (records [][]string, err error) {
 		}
 		if err != nil {
 			return records, err
+		}
+		if records == nil && r.parseResult != nil {
+			records = make([][]string, 0, len(r.parseResult.rows))
 		}
 		records = append(records, record)
 	}
@@ -323,6 +345,7 @@ func (r *Reader) Release() {
 	r.lastRecord = nil
 	r.recordBuffer = nil
 	r.fieldEnds = nil
+	r.chunkHasQuote = nil
 }
 
 // ReaderOptions contains extended configuration options for [Reader].
