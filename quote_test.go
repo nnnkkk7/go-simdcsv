@@ -198,54 +198,6 @@ func TestFindClosingQuote(t *testing.T) {
 }
 
 // =============================================================================
-// extractQuotedContent Tests
-// =============================================================================
-
-func TestExtractQuotedContent(t *testing.T) {
-	tests := []struct {
-		name            string
-		input           []byte
-		closingQuoteIdx int
-		want            string
-	}{
-		{
-			name:            "simple content",
-			input:           []byte(`"hello"`),
-			closingQuoteIdx: 6,
-			want:            "hello",
-		},
-		{
-			name:            "empty content",
-			input:           []byte(`""`),
-			closingQuoteIdx: 1,
-			want:            "",
-		},
-		{
-			name:            "content with comma",
-			input:           []byte(`"a,b,c"`),
-			closingQuoteIdx: 6,
-			want:            "a,b,c",
-		},
-		{
-			name:            "closing at 0",
-			input:           []byte(`""`),
-			closingQuoteIdx: 0,
-			want:            "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := extractQuotedContent(tt.input, tt.closingQuoteIdx)
-			if got != tt.want {
-				t.Errorf("extractQuotedContent(%q, %d) = %q, want %q",
-					tt.input, tt.closingQuoteIdx, got, tt.want)
-			}
-		})
-	}
-}
-
-// =============================================================================
 // findClosingQuote SIMD Tests
 // =============================================================================
 

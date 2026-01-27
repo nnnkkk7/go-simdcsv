@@ -231,14 +231,6 @@ func (r *Reader) InputOffset() int64 {
 	return r.state.offset
 }
 
-// Release returns internal resources to their pools for reuse.
-// The Reader should not be used after calling Release.
-// This is optional; resources will be garbage collected if not released.
-func (r *Reader) Release() {
-	releaseParseResult(r.state.parseResult)
-	r.state = readerState{}
-}
-
 // ============================================================================
 // Internal - Record Reading
 // ============================================================================

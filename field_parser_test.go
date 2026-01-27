@@ -3,7 +3,6 @@
 package simdcsv
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -658,132 +657,34 @@ func TestQuoteHandling(t *testing.T) {
 }
 
 // =============================================================================
-// TestDoubleQuoteUnescape - Double Quote Handling
+// TestNeedsUnescapeFlag - Double Quote Flag Handling
 // =============================================================================
 
-func TestDoubleQuoteUnescape(t *testing.T) {
-	t.Run("BasicDoubleQuote", func(t *testing.T) {
-		// Input: ""Hello"" should become "Hello"
-		input := `""Hello""`
-		expected := `"Hello"`
+func TestNeedsUnescapeFlag(t *testing.T) {
+	// Test that needsUnescape flag is set correctly for fields
+	// containing double quotes
+	buf := []byte("\"He said \"\"Hi\"\"\",normal\n")
 
-		got := unescapeDoubleQuotes(input)
-		if got != expected {
-			t.Errorf("expected %q, got %q", expected, got)
-		}
-	})
+	// Scan would mark chunks with double quotes in chunkHasDQ
+	sr := &scanResult{
+		quoteMasks:     []uint64{(1 << 0) | (1 << 14)}, // outer quotes
+		separatorMasks: []uint64{1 << 15},
+		newlineMasks:   []uint64{1 << 22},
+		chunkHasDQ:     []bool{true}, // chunk 0 has double quotes
+		chunkCount:     1,
+		lastChunkBits:  23,
+	}
 
-	t.Run("MultipleDoubleQuotes", func(t *testing.T) {
-		// Input: He said ""Hello"" and ""Goodbye""
-		input := `He said ""Hello"" and ""Goodbye""`
-		expected := `He said "Hello" and "Goodbye"`
+	result := parseBuffer(buf, sr)
 
-		got := unescapeDoubleQuotes(input)
-		if got != expected {
-			t.Errorf("expected %q, got %q", expected, got)
-		}
-	})
+	if len(result.fields) < 1 {
+		t.Fatalf("expected at least 1 field, got %d", len(result.fields))
+	}
 
-	t.Run("NoDoubleQuotes", func(t *testing.T) {
-		// Fast path: no double quotes
-		input := "simple text without quotes"
-		expected := "simple text without quotes"
-
-		got := unescapeDoubleQuotes(input)
-		if got != expected {
-			t.Errorf("expected %q, got %q", expected, got)
-		}
-	})
-
-	t.Run("EmptyString", func(t *testing.T) {
-		input := ""
-		expected := ""
-
-		got := unescapeDoubleQuotes(input)
-		if got != expected {
-			t.Errorf("expected %q, got %q", expected, got)
-		}
-	})
-
-	t.Run("OnlyDoubleQuotes", func(t *testing.T) {
-		// """""" (6 quotes) -> """ (3 quotes)
-		input := `""""""`
-		expected := `"""`
-
-		got := unescapeDoubleQuotes(input)
-		if got != expected {
-			t.Errorf("expected %q, got %q", expected, got)
-		}
-	})
-
-	t.Run("SingleQuote", func(t *testing.T) {
-		// Single quote should remain unchanged
-		input := `"`
-		expected := `"`
-
-		got := unescapeDoubleQuotes(input)
-		if got != expected {
-			t.Errorf("expected %q, got %q", expected, got)
-		}
-	})
-
-	t.Run("NeedsUnescapeFlag", func(t *testing.T) {
-		// Test that needsUnescape flag is set correctly for fields
-		// containing double quotes
-		buf := []byte("\"He said \"\"Hi\"\"\",normal\n")
-
-		// Scan would mark chunks with double quotes in chunkHasDQ
-		sr := &scanResult{
-			quoteMasks:     []uint64{(1 << 0) | (1 << 14)}, // outer quotes
-			separatorMasks: []uint64{1 << 15},
-			newlineMasks:   []uint64{1 << 22},
-			chunkHasDQ:     []bool{true}, // chunk 0 has double quotes
-			chunkCount:     1,
-			lastChunkBits:  23,
-		}
-
-		result := parseBuffer(buf, sr)
-
-		if len(result.fields) < 1 {
-			t.Fatalf("expected at least 1 field, got %d", len(result.fields))
-		}
-
-		// First field should have needsUnescape=true
-		if !result.fields[0].needsUnescape() {
-			t.Error("expected first field to have needsUnescape=true")
-		}
-	})
-
-	t.Run("UnescapeWithExtraction", func(t *testing.T) {
-		// Full test: extract field with double quotes and unescape
-		// Input: "a""b"\n (7 bytes)
-		// Positions: 0=" 1=a 2=" 3=" 4=b 5=" 6=\n
-		buf := []byte("\"a\"\"b\"\n")
-
-		sr := &scanResult{
-			quoteMasks:     []uint64{(1 << 0) | (1 << 5)}, // outer quotes at 0 and 5 (inner "" at 2,3 removed by Scan)
-			separatorMasks: []uint64{0},
-			newlineMasks:   []uint64{1 << 6},
-			chunkHasDQ:     []bool{true},
-			chunkCount:     1,
-			lastChunkBits:  7,
-		}
-
-		result := parseBuffer(buf, sr)
-
-		if len(result.fields) != 1 {
-			t.Fatalf("expected 1 field, got %d", len(result.fields))
-		}
-
-		f := result.fields[0]
-		raw := string(buf[f.start : f.start+f.length])
-		final := unescapeDoubleQuotes(raw)
-
-		// "a""b" with outer quotes removed becomes a""b, unescaped becomes a"b
-		if final != "a\"b" {
-			t.Errorf("expected %q, got %q", "a\"b", final)
-		}
-	})
+	// First field should have needsUnescape=true
+	if !result.fields[0].needsUnescape() {
+		t.Error("expected first field to have needsUnescape=true")
+	}
 }
 
 // =============================================================================
@@ -1238,24 +1139,6 @@ func BenchmarkParseBuffer(b *testing.B) {
 	}
 }
 
-func BenchmarkUnescapeDoubleQuotes(b *testing.B) {
-	b.Run("NoEscape", func(b *testing.B) {
-		input := "this is a normal string without any escaped quotes"
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			_ = unescapeDoubleQuotes(input)
-		}
-	})
-
-	b.Run("WithEscape", func(b *testing.B) {
-		input := `He said ""Hello"" and ""Goodbye"" to everyone`
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			_ = unescapeDoubleQuotes(input)
-		}
-	})
-}
-
 // =============================================================================
 // Helper Functions
 // =============================================================================
@@ -1272,170 +1155,3 @@ func extractFieldContent(buf []byte, f fieldInfo) string {
 	return string(buf[f.start : f.start+f.length])
 }
 
-// =============================================================================
-// unescapeDoubleQuotes SIMD Tests
-// =============================================================================
-
-func TestUnescapeDoubleQuotes_SIMDvsScalar(t *testing.T) {
-	if !useAVX512 {
-		t.Skip("AVX-512 not available, skipping SIMD test")
-	}
-
-	tests := []struct {
-		name  string
-		input string
-	}{
-		{"empty", ""},
-		{"no quotes", "hello world"},
-		{"single quote", `"`},
-		{"double quote", `""`},
-		{"basic escape", `He said ""Hello""`},
-		{"multiple escapes", `""A"" and ""B"" and ""C""`},
-		{"only double quotes", `""""""`},
-		{"long no quotes", strings.Repeat("abcdefgh", 20)},
-		{"long with escape at start", `""` + strings.Repeat("x", 100)},
-		{"long with escape at end", strings.Repeat("x", 100) + `""`},
-		{"long with escape in middle", strings.Repeat("x", 50) + `""` + strings.Repeat("y", 50)},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			scalar := unescapeDoubleQuotesScalar(tt.input)
-			// Force SIMD path even for short strings
-			simd := unescapeDoubleQuotesSIMD(tt.input)
-
-			if scalar != simd {
-				t.Errorf("unescapeDoubleQuotes mismatch:\ninput:  %q\nscalar: %q\nsimd:   %q",
-					tt.input, scalar, simd)
-			}
-		})
-	}
-}
-
-func TestUnescapeDoubleQuotes_LongInput(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{
-			name:  "100 chars with escapes",
-			input: strings.Repeat(`a""b`, 25),
-			want:  strings.Repeat(`a"b`, 25),
-		},
-		{
-			name:  "escape at chunk boundary 31-32",
-			input: strings.Repeat("x", 31) + `""` + strings.Repeat("y", 31),
-			want:  strings.Repeat("x", 31) + `"` + strings.Repeat("y", 31),
-		},
-		{
-			name:  "escape at chunk boundary 63-64",
-			input: strings.Repeat("x", 63) + `""` + strings.Repeat("y", 32),
-			want:  strings.Repeat("x", 63) + `"` + strings.Repeat("y", 32),
-		},
-		{
-			name:  "multiple escapes across chunks",
-			input: strings.Repeat("a", 30) + `""` + strings.Repeat("b", 30) + `""` + strings.Repeat("c", 30),
-			want:  strings.Repeat("a", 30) + `"` + strings.Repeat("b", 30) + `"` + strings.Repeat("c", 30),
-		},
-		{
-			name:  "no escapes long string",
-			input: strings.Repeat("hello world ", 50),
-			want:  strings.Repeat("hello world ", 50),
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := unescapeDoubleQuotes(tt.input)
-			if got != tt.want {
-				t.Errorf("unescapeDoubleQuotes mismatch:\ninput len: %d\ngot len:   %d\nwant len:  %d",
-					len(tt.input), len(got), len(tt.want))
-			}
-			// Verify scalar and SIMD produce same result (only if AVX-512 available)
-			scalar := unescapeDoubleQuotesScalar(tt.input)
-			if useAVX512 {
-				simd := unescapeDoubleQuotesSIMD(tt.input)
-				if scalar != simd {
-					t.Errorf("scalar/simd mismatch:\nscalar: %q\nsimd:   %q", scalar, simd)
-				}
-			}
-		})
-	}
-}
-
-func TestUnescapeDoubleQuotes_EdgeCases(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{
-			name:  "triple quote",
-			input: `"""`,
-			want:  `""`,
-		},
-		{
-			name:  "quadruple quote",
-			input: `""""`,
-			want:  `""`,
-		},
-		{
-			name:  "six quotes",
-			input: `""""""`,
-			want:  `"""`,
-		},
-		{
-			name:  "quote then content",
-			input: `""hello`,
-			want:  `"hello`,
-		},
-		{
-			name:  "content then quote",
-			input: `hello""`,
-			want:  `hello"`,
-		},
-		{
-			name:  "alternating quotes and content",
-			input: `a""b""c""d`,
-			want:  `a"b"c"d`,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := unescapeDoubleQuotes(tt.input)
-			if got != tt.want {
-				t.Errorf("unescapeDoubleQuotes(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
-func BenchmarkUnescapeDoubleQuotes_LongNoEscape(b *testing.B) {
-	input := strings.Repeat("abcdefgh", 100)
-	for b.Loop() {
-		_ = unescapeDoubleQuotes(input)
-	}
-}
-
-func BenchmarkUnescapeDoubleQuotes_LongNoEscapeScalar(b *testing.B) {
-	input := strings.Repeat("abcdefgh", 100)
-	for b.Loop() {
-		_ = unescapeDoubleQuotesScalar(input)
-	}
-}
-
-func BenchmarkUnescapeDoubleQuotes_LongWithEscape(b *testing.B) {
-	input := strings.Repeat(`a""b`, 100)
-	for b.Loop() {
-		_ = unescapeDoubleQuotes(input)
-	}
-}
-
-func BenchmarkUnescapeDoubleQuotes_LongWithEscapeScalar(b *testing.B) {
-	input := strings.Repeat(`a""b`, 100)
-	for b.Loop() {
-		_ = unescapeDoubleQuotesScalar(input)
-	}
-}

@@ -60,7 +60,7 @@ func TestValidateFieldQuotes_Valid(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := newTestReaderWithBuffer([]byte(tt.input))
-			err := r.validateFieldQuotes(0, uint64(len(tt.input)), 1)
+			err := r.validateFieldQuotesWithField(fieldInfo{}, 0, uint64(len(tt.input)), 1)
 			if err != nil {
 				t.Errorf("validateFieldQuotes(%q) unexpected error: %v", tt.input, err)
 			}
@@ -81,7 +81,7 @@ func TestValidateFieldQuotes_BareQuote(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := newTestReaderWithBuffer([]byte(tt.input))
-			err := r.validateFieldQuotes(0, uint64(len(tt.input)), 1)
+			err := r.validateFieldQuotesWithField(fieldInfo{}, 0, uint64(len(tt.input)), 1)
 			if err == nil {
 				t.Errorf("validateFieldQuotes(%q) expected error, got nil", tt.input)
 				return
@@ -104,7 +104,7 @@ func TestValidateFieldQuotes_UnclosedQuote(t *testing.T) {
 	input := `"hello`
 	r := newTestReaderWithBuffer([]byte(input))
 
-	err := r.validateFieldQuotes(0, uint64(len(input)), 1)
+	err := r.validateFieldQuotesWithField(fieldInfo{}, 0, uint64(len(input)), 1)
 	if err == nil {
 		t.Error("expected error for unclosed quote")
 		return
@@ -125,7 +125,7 @@ func TestValidateFieldQuotes_TextAfterClosingQuote(t *testing.T) {
 	input := `"hello"world`
 	r := newTestReaderWithBuffer([]byte(input))
 
-	err := r.validateFieldQuotes(0, uint64(len(input)), 1)
+	err := r.validateFieldQuotesWithField(fieldInfo{}, 0, uint64(len(input)), 1)
 	if err == nil {
 		t.Error("expected error for text after closing quote")
 		return
@@ -164,7 +164,7 @@ func TestValidateFieldQuotes_WithTrimLeadingSpace(t *testing.T) {
 			r := newTestReaderWithBuffer([]byte(tt.input))
 			r.TrimLeadingSpace = true
 
-			err := r.validateFieldQuotes(0, uint64(endPos), 1)
+			err := r.validateFieldQuotesWithField(fieldInfo{}, 0, uint64(endPos), 1)
 			if tt.wantErr && err == nil {
 				t.Errorf("validateFieldQuotes(%q) expected error, got nil", tt.input)
 			}

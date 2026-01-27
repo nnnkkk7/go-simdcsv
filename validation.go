@@ -76,11 +76,6 @@ func (r *Reader) extractFieldBytes(rawStart, rawEnd uint64) ([]byte, bool) {
 // Field Quote Validation - Entry points
 // =============================================================================
 
-// validateFieldQuotes validates quote usage in a field without pre-parsed metadata.
-func (r *Reader) validateFieldQuotes(rawStart, rawEnd uint64, lineNum int) error {
-	return r.validateFieldQuotesWithField(fieldInfo{}, rawStart, rawEnd, lineNum)
-}
-
 // validateFieldQuotesWithField validates quote usage in a field using field metadata when available.
 func (r *Reader) validateFieldQuotesWithField(field fieldInfo, rawStart, rawEnd uint64, lineNum int) error {
 	raw, ok := r.extractFieldBytes(rawStart, rawEnd)
