@@ -3,44 +3,37 @@
 //nolint:gosec // G115: Integer conversions are safe - buffer size bounded by DefaultMaxInputSize (2GB)
 package simdcsv
 
+// ============================================================================
+// Public API - Direct Parsing
+// ============================================================================
+
 // ParseBytes parses a byte slice directly (zero-copy).
-// This function runs scanBuffer and parseBuffer processing and returns all records.
+// Returns all records extracted from the CSV data.
 func ParseBytes(data []byte, comma rune) ([][]string, error) {
 	if len(data) == 0 {
 		return nil, nil
 	}
 
-	// Scan: Structural analysis using SIMD (generates bitmasks)
-	separatorChar := byte(comma)
-	sr := scanBuffer(data, separatorChar)
-
-	// Parse: Extract fields and rows from scan result
+	separator := byte(comma)
+	sr := scanBuffer(data, separator)
 	pr := parseBuffer(data, sr)
-
-	// Build: Convert parseResult to [][]string
 	records := buildRecords(data, pr, sr.hasCR)
 
-	// Release parseResult back to pool
 	releaseParseResult(pr)
-	// Release scanResult back to pool
 	releaseScanResult(sr)
 
 	return records, nil
 }
 
 // ParseBytesStreaming parses data using a streaming callback function.
-// The callback is invoked for each record parsed from the input.
-// If the callback returns an error, parsing stops and that error is returned.
+// The callback is invoked for each record. If it returns an error, parsing stops.
 func ParseBytesStreaming(data []byte, comma rune, callback func([]string) error) error {
 	if len(data) == 0 {
 		return nil
 	}
 
-	// Scan: Structural analysis using SIMD (generates bitmasks)
-	separatorChar := byte(comma)
-	sr := scanBuffer(data, separatorChar)
-
-	// Parse: Extract fields and rows from scan result
+	separator := byte(comma)
+	sr := scanBuffer(data, separator)
 	pr := parseBuffer(data, sr)
 	defer releaseParseResult(pr)
 	defer releaseScanResult(sr)
@@ -49,7 +42,6 @@ func ParseBytesStreaming(data []byte, comma rune, callback func([]string) error)
 		return nil
 	}
 
-	// Build: Invoke callback for each record
 	for _, row := range pr.rows {
 		record := buildRecord(data, pr, row, sr.hasCR)
 		if err := callback(record); err != nil {
@@ -59,11 +51,13 @@ func ParseBytesStreaming(data []byte, comma rune, callback func([]string) error)
 	return nil
 }
 
-// buildRecords converts a parseResult to [][]string using the standard library pattern.
-// This optimizes memory allocation by:
-// 1. Accumulating all field content into a single recordBuffer per record
-// 2. Converting to string once per record
-// 3. Zero-copy slicing to create individual field strings
+// ============================================================================
+// Internal - Record Building (for direct API)
+// ============================================================================
+
+// buildRecords converts a parseResult to [][]string.
+// Optimizes memory by accumulating fields into a single buffer per record,
+// then using zero-copy slicing after a single string conversion.
 func buildRecords(buf []byte, pr *parseResult, hasCR bool) [][]string {
 	if pr == nil || len(pr.rows) == 0 {
 		return nil
@@ -71,96 +65,41 @@ func buildRecords(buf []byte, pr *parseResult, hasCR bool) [][]string {
 
 	records := make([][]string, len(pr.rows))
 
-	// Shared buffers (reused across records)
-	var recordBuffer []byte
+	// Shared buffers reused across records
+	var recordBuf []byte
 	var fieldEnds []int
 
-	for rowIdx, row := range pr.rows {
-		// Reset buffers (reuse capacity)
-		recordBuffer = recordBuffer[:0]
-		fieldEnds = fieldEnds[:0]
-
-		// Phase 1: Accumulate all field content into recordBuffer
-		for i := 0; i < row.fieldCount; i++ {
-			fieldIdx := row.firstField + i
-			if fieldIdx >= len(pr.fields) {
-				break
-			}
-			field := pr.fields[fieldIdx]
-			appendFieldToBuffer(buf, field, &recordBuffer, hasCR)
-			fieldEnds = append(fieldEnds, len(recordBuffer))
-		}
-
-		// Phase 2: Single string conversion + zero-copy slicing
-		str := string(recordBuffer)
-		record := make([]string, len(fieldEnds))
-		prevEnd := 0
-		for i, end := range fieldEnds {
-			record[i] = str[prevEnd:end]
-			prevEnd = end
-		}
-		records[rowIdx] = record
+	for i, row := range pr.rows {
+		recordBuf, fieldEnds = accumulateFields(buf, pr, row, hasCR, recordBuf[:0], fieldEnds[:0])
+		records[i] = sliceFieldsFromBuffer(recordBuf, fieldEnds)
 	}
 	return records
 }
 
-// appendFieldToBuffer appends field content to buffer with inline unescape and CRLF normalization.
-func appendFieldToBuffer(buf []byte, field fieldInfo, recordBuffer *[]byte, hasCR bool) {
-	if field.length == 0 {
-		return
-	}
-
-	// Get field content safely
-	start := field.start
-	end := field.start + field.length
-	bufLen := uint32(len(buf))
-	if start >= bufLen {
-		return
-	}
-	if end > bufLen {
-		end = bufLen
-	}
-	content := buf[start:end]
-
-	// Check if transformation is needed
-	needsTransform := field.needsUnescape() || (hasCR && containsCRLFBytes(content))
-	if !needsTransform {
-		// Fast path: append as-is
-		*recordBuffer = append(*recordBuffer, content...)
-		return
-	}
-
-	// Slow path: inline unescape ("" -> ") and CRLF normalization (\r\n -> \n)
-	for i := 0; i < len(content); i++ {
-		b := content[i]
-		if b == '"' && i+1 < len(content) && content[i+1] == '"' {
-			*recordBuffer = append(*recordBuffer, '"')
-			i++ // skip next quote
-		} else if b == '\r' && i+1 < len(content) && content[i+1] == '\n' {
-			*recordBuffer = append(*recordBuffer, '\n')
-			i++ // skip \n
-		} else {
-			*recordBuffer = append(*recordBuffer, b)
-		}
-	}
-}
-
 // buildRecord builds a single record from a rowInfo (for streaming API).
 func buildRecord(buf []byte, pr *parseResult, row rowInfo, hasCR bool) []string {
-	var recordBuffer []byte
-	var fieldEnds []int
+	recordBuf, fieldEnds := accumulateFields(buf, pr, row, hasCR, nil, nil)
+	return sliceFieldsFromBuffer(recordBuf, fieldEnds)
+}
 
+// accumulateFields appends all field contents from a row into recordBuf.
+// Returns the updated recordBuf and fieldEnds slice.
+func accumulateFields(buf []byte, pr *parseResult, row rowInfo, hasCR bool, recordBuf []byte, fieldEnds []int) ([]byte, []int) {
 	for i := 0; i < row.fieldCount; i++ {
 		fieldIdx := row.firstField + i
 		if fieldIdx >= len(pr.fields) {
 			break
 		}
-		field := pr.fields[fieldIdx]
-		appendFieldToBuffer(buf, field, &recordBuffer, hasCR)
-		fieldEnds = append(fieldEnds, len(recordBuffer))
+		recordBuf = appendFieldContent(buf, pr.fields[fieldIdx], recordBuf, hasCR)
+		fieldEnds = append(fieldEnds, len(recordBuf))
 	}
+	return recordBuf, fieldEnds
+}
 
-	str := string(recordBuffer)
+// sliceFieldsFromBuffer converts the accumulated buffer to individual field strings.
+// Uses a single string conversion followed by zero-copy slicing.
+func sliceFieldsFromBuffer(recordBuf []byte, fieldEnds []int) []string {
+	str := string(recordBuf)
 	record := make([]string, len(fieldEnds))
 	prevEnd := 0
 	for i, end := range fieldEnds {
@@ -168,4 +107,61 @@ func buildRecord(buf []byte, pr *parseResult, row rowInfo, hasCR bool) []string 
 		prevEnd = end
 	}
 	return record
+}
+
+// ============================================================================
+// Internal - Field Content Extraction
+// ============================================================================
+
+// appendFieldContent appends field content to buffer with unescape and CRLF normalization.
+// Policy: decides whether transformation is needed based on field metadata and content.
+func appendFieldContent(buf []byte, field fieldInfo, recordBuf []byte, hasCR bool) []byte {
+	content := extractFieldBytes(buf, field)
+	if content == nil {
+		return recordBuf
+	}
+
+	needsTransform := field.needsUnescape() || (hasCR && containsCRLFBytes(content))
+	if !needsTransform {
+		return append(recordBuf, content...)
+	}
+
+	return transformContent(content, recordBuf)
+}
+
+// extractFieldBytes returns the raw bytes for a field, handling bounds checking.
+// Mechanism: pure extraction without transformation decisions.
+func extractFieldBytes(buf []byte, field fieldInfo) []byte {
+	if field.length == 0 {
+		return nil
+	}
+
+	start := field.start
+	end := field.start + field.length
+	bufLen := uint32(len(buf))
+	if start >= bufLen {
+		return nil
+	}
+	if end > bufLen {
+		end = bufLen
+	}
+	return buf[start:end]
+}
+
+// transformContent applies double-quote unescaping and CRLF normalization.
+// Mechanism: pure transformation of bytes without policy decisions.
+func transformContent(content, dst []byte) []byte {
+	for i := 0; i < len(content); i++ {
+		b := content[i]
+		if b == '"' && i+1 < len(content) && content[i+1] == '"' {
+			dst = append(dst, '"')
+			i++
+		} else if b == '\r' && i+1 < len(content) && content[i+1] == '\n' {
+			dst = append(dst, '\n')
+			i++
+		} else {
+			dst = append(dst, b)
+		}
+	}
+	return dst
 }
