@@ -14,6 +14,11 @@ on:
         required: false
         default: '1'
         type: string
+      enable_pprof:
+        description: 'Generate CPU/Memory pprof for benchmarks (true/false)'
+        required: false
+        default: 'false'
+        type: string
 
 jobs:
   ci:
@@ -63,9 +68,31 @@ jobs:
             -cpu=1,2 \
             ./... | tee benchmark-results.txt
 
+      - name: Run Benchmarks with pprof
+        if: ${{ inputs.enable_pprof == 'true' }}
+        run: |
+          echo "=== Running Benchmarks with pprof ==="
+          go test -run='^$' -bench='${{ inputs.benchmark_pattern }}' \
+            -benchmem \
+            -count=1 \
+            -cpuprofile=cpu.pprof \
+            -memprofile=mem.pprof \
+            -cpu=1,2 \
+            .
+
       - name: Upload Benchmark Results
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: benchmark-results-${{ github.run_number }}
           path: benchmark-results.txt
+          retention-days: 90
+
+      - name: Upload Benchmark Profiles
+        if: ${{ inputs.enable_pprof == 'true' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: benchmark-pprof-${{ github.run_number }}
+          path: |
+            cpu.pprof
+            mem.pprof
           retention-days: 90
