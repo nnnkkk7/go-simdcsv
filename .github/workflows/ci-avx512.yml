@@ -17,8 +17,11 @@ on:
       enable_pprof:
         description: 'Generate CPU/Memory pprof for benchmarks (true/false)'
         required: false
-        default: 'false'
-        type: string
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
 
 jobs:
   ci:
@@ -62,23 +65,17 @@ jobs:
       - name: Run Benchmarks
         run: |
           echo "=== Running Benchmarks ==="
-          go test -bench='${{ inputs.benchmark_pattern }}' \
-            -benchmem \
-            -count=${{ inputs.benchmark_count }} \
-            -cpu=1,2 \
-            ./... | tee benchmark-results.txt
-
-      - name: Run Benchmarks with pprof
-        if: ${{ inputs.enable_pprof == 'true' }}
-        run: |
-          echo "=== Running Benchmarks with pprof ==="
-          go test -run='^$' -bench='${{ inputs.benchmark_pattern }}' \
-            -benchmem \
-            -count=1 \
-            -cpuprofile=cpu.pprof \
-            -memprofile=mem.pprof \
-            -cpu=1,2 \
-            .
+          if [ "${{ inputs.enable_pprof }}" = "true" ]; then
+            COUNT=1
+            PKG="."
+            ARGS=(-run "^$" -cpuprofile=cpu.pprof -memprofile=mem.pprof)
+          else
+            COUNT="${{ inputs.benchmark_count }}"
+            PKG="./..."
+            ARGS=()
+          fi
+          ARGS+=(-bench='${{ inputs.benchmark_pattern }}' -benchmem -count="${COUNT}" -cpu=1,2 "${PKG}")
+          go test "${ARGS[@]}" | tee benchmark-results.txt
 
       - name: Upload Benchmark Results
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
