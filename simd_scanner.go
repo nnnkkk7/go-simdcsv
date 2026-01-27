@@ -493,6 +493,46 @@ func scanBufferScalar(buf []byte, separatorChar byte) *scanResult {
 		}
 
 		// Save the initial quoted state for newline invalidation
+		if quoteMask == 0 {
+			if state.quoted == 0 {
+				// Fast path: not inside quotes and no quotes in this chunk.
+				result.quoteMasks[chunkIdx] = 0
+				result.separatorMasks[chunkIdx] = sepMask
+				result.newlineMasks[chunkIdx] = newlineMaskOut
+
+				result.separatorCount += bits.OnesCount64(sepMask)
+				result.newlineCount += bits.OnesCount64(newlineMaskOut)
+			} else {
+				// Fast path: inside quotes and no quotes in this chunk.
+				result.quoteMasks[chunkIdx] = 0
+				result.separatorMasks[chunkIdx] = 0
+				result.newlineMasks[chunkIdx] = 0
+			}
+
+			// Slide masks: current = next, compute new next for chunkIdx+2
+			curMasks = nextMasks
+			curValidBits = simdChunkSize // next chunk was full unless it's the last
+
+			nextChunkIdx := chunkIdx + 2
+			if nextChunkIdx < chunkCount {
+				nextOffset := nextChunkIdx * simdChunkSize
+				remaining := len(buf) - nextOffset
+				if remaining >= simdChunkSize {
+					nextMasks.quote, nextMasks.sep, nextMasks.cr, nextMasks.nl = generateMasks(buf[nextOffset:nextOffset+simdChunkSize], separatorChar)
+				} else {
+					nextMasks.quote, nextMasks.sep, nextMasks.cr, nextMasks.nl, curValidBits = generateMasksPadded(buf[nextOffset:], separatorChar)
+					result.lastChunkBits = curValidBits
+				}
+			} else {
+				nextMasks = chunkMasks{}
+				if chunkIdx+1 == chunkCount-1 && len(buf)%simdChunkSize != 0 {
+					curValidBits = len(buf) % simdChunkSize
+					result.lastChunkBits = curValidBits
+				}
+			}
+			continue
+		}
+
 		initialQuoted := state.quoted
 
 		// Process quotes and separators, invalidating those inside quoted regions
@@ -533,12 +573,8 @@ func scanBufferScalar(buf []byte, separatorChar byte) *scanResult {
 		}
 
 		// Accumulate counts for preallocation sizing
-		if sepMaskOut != 0 {
-			result.separatorCount += bits.OnesCount64(sepMaskOut)
-		}
-		if newlineMaskOut != 0 {
-			result.newlineCount += bits.OnesCount64(newlineMaskOut)
-		}
+		result.separatorCount += bits.OnesCount64(sepMaskOut)
+		result.newlineCount += bits.OnesCount64(newlineMaskOut)
 
 		// Slide masks: current = next, compute new next for chunkIdx+2
 		curMasks = nextMasks
@@ -647,6 +683,45 @@ func scanBufferAVX512(buf []byte, separatorChar byte) *scanResult {
 			} else {
 				newlineMaskOut |= uint64(1) << 63
 			}
+		}
+
+		if quoteMask == 0 {
+			if state.quoted == 0 {
+				// Fast path: not inside quotes and no quotes in this chunk.
+				result.quoteMasks[chunkIdx] = 0
+				result.separatorMasks[chunkIdx] = sepMask
+				result.newlineMasks[chunkIdx] = newlineMaskOut
+
+				result.separatorCount += bits.OnesCount64(sepMask)
+				result.newlineCount += bits.OnesCount64(newlineMaskOut)
+			} else {
+				// Fast path: inside quotes and no quotes in this chunk.
+				result.quoteMasks[chunkIdx] = 0
+				result.separatorMasks[chunkIdx] = 0
+				result.newlineMasks[chunkIdx] = 0
+			}
+
+			curMasks = nextMasks
+			curValidBits = simdChunkSize
+
+			nextChunkIdx := chunkIdx + 2
+			if nextChunkIdx < chunkCount {
+				nextOffset := nextChunkIdx * simdChunkSize
+				remaining := len(buf) - nextOffset
+				if remaining >= simdChunkSize {
+					nextMasks.quote, nextMasks.sep, nextMasks.cr, nextMasks.nl = generateMasksAVX512WithCmp(buf[nextOffset:nextOffset+simdChunkSize], quoteCmp, sepCmp, crCmp, nlCmp)
+				} else {
+					nextMasks.quote, nextMasks.sep, nextMasks.cr, nextMasks.nl, curValidBits = generateMasksPaddedWithCmp(buf[nextOffset:], quoteCmp, sepCmp, crCmp, nlCmp)
+					result.lastChunkBits = curValidBits
+				}
+			} else {
+				nextMasks = chunkMasks{}
+				if chunkIdx+1 == chunkCount-1 && len(buf)%simdChunkSize != 0 {
+					curValidBits = len(buf) % simdChunkSize
+					result.lastChunkBits = curValidBits
+				}
+			}
+			continue
 		}
 
 		initialQuoted := state.quoted

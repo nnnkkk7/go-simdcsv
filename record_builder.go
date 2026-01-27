@@ -148,6 +148,12 @@ func (r *Reader) appendFieldContent(field fieldInfo, rawStart, rawEnd uint64) {
 		content = trimLeftBytes(content)
 	}
 
+	// Unquoted fields cannot contain CRLF. Skip CRLF scan when unescape is not needed.
+	if field.flags&fieldFlagIsQuoted == 0 && !field.needsUnescape() {
+		r.recordBuffer = append(r.recordBuffer, content...)
+		return
+	}
+
 	// Check if transformation is needed
 	if !field.needsUnescape() && !containsCRLFBytes(content) {
 		// Fast path: append as-is
