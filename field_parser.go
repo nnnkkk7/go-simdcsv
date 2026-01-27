@@ -184,59 +184,42 @@ func processChunkMasks(
 	state *parserState, result *parseResult,
 	currentRowFirstField, lineNum *int,
 ) {
-	for sepMask != 0 || nlMask != 0 || quoteMask != 0 {
-		sepPos := trailingZerosOr64(sepMask)
-		nlPos := trailingZerosOr64(nlMask)
-		quotePos := trailingZerosOr64(quoteMask)
-
-		minPos := minOfThree(quotePos, sepPos, nlPos)
-		if minPos >= 64 {
+	for {
+		combined := sepMask | nlMask | quoteMask
+		if combined == 0 {
 			break
 		}
+		pos := bits.TrailingZeros64(combined)
+		bit := uint64(1) << pos
 
-		switch minPos {
-		case quotePos:
-			processQuoteEvent(offset+uint64(quotePos), state)
-			quoteMask = clearBit(quoteMask, quotePos)
+		switch {
+		case quoteMask&bit != 0:
+			processQuoteEvent(offset+uint64(pos), state)
+			quoteMask &^= bit
 
-		case sepPos:
+		case sepMask&bit != 0:
 			if !state.quoted {
-				recordField(buf, offset+uint64(sepPos), state, result, false)
+				recordField(buf, offset+uint64(pos), state, result, false)
 			}
-			sepMask = clearBit(sepMask, sepPos)
+			sepMask &^= bit
 
-		default: // nlPos
+		default:
 			if !state.quoted {
-				absPos := offset + uint64(nlPos)
-				// Check if this is a blank line (no fields recorded yet, empty field)
+				absPos := offset + uint64(pos)
 				isBlankLine := *currentRowFirstField == len(result.fields) && state.fieldStart == absPos
 				if isBlankLine {
-					// Skip blank line - just advance past the newline
 					state.fieldStart = absPos + 1
 					state.quoteAdjust = 0
 					state.lastClosingQuote = -1
-					(*lineNum)++ // Still count the line number
+					(*lineNum)++
 				} else {
 					recordField(buf, absPos, state, result, true)
 					recordRow(result, currentRowFirstField, lineNum)
 				}
 			}
-			nlMask = clearBit(nlMask, nlPos)
+			nlMask &^= bit
 		}
 	}
-}
-
-// trailingZerosOr64 returns bits.TrailingZeros64 or 64 if mask is 0.
-func trailingZerosOr64(mask uint64) int {
-	if mask == 0 {
-		return 64
-	}
-	return bits.TrailingZeros64(mask)
-}
-
-// clearBit clears the bit at position pos in mask.
-func clearBit(mask uint64, pos int) uint64 {
-	return mask & ^(uint64(1) << pos)
 }
 
 // processQuoteEvent handles a quote character.

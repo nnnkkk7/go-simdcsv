@@ -3,9 +3,7 @@
 //nolint:gosec // G115: Integer conversions are safe - buffer size bounded by DefaultMaxInputSize (2GB)
 package simdcsv
 
-import (
-	"math/bits"
-)
+import "bytes"
 
 // =============================================================================
 // Record Building - Functions for constructing records from parsed data
@@ -203,48 +201,38 @@ func trimLeftBytes(b []byte) []byte {
 	return b
 }
 
-// containsCRLFBytes checks if byte slice contains CRLF sequence using SIMD when available.
+// containsCRLFBytes checks if byte slice contains CRLF sequence.
+// Optimized to minimize IndexByte calls for common cases.
 func containsCRLFBytes(b []byte) bool {
 	if len(b) < 2 {
 		return false
 	}
 
-	// For longer inputs, use SIMD to find CR characters quickly
-	if len(b) >= simdChunkSize {
-		// Use the existing mask generation to find CR positions
-		for i := 0; i <= len(b)-simdChunkSize; i += simdChunkSize {
-			chunk := b[i : i+simdChunkSize]
-			_, _, crMask, _ := generateMasks(chunk, ',') // separator doesn't matter here
-			if crMask != 0 {
-				// Found CR, check if followed by LF
-				for crMask != 0 {
-					pos := bits.TrailingZeros64(crMask)
-					absPos := i + pos
-					if absPos+1 < len(b) && b[absPos+1] == '\n' {
-						return true
-					}
-					crMask &= crMask - 1
-				}
-			}
-		}
+	// First check: find any CR
+	idx := bytes.IndexByte(b, '\r')
+	if idx == -1 || idx >= len(b)-1 {
+		return false
 	}
 
-	// Scalar fallback for remaining bytes (handles tail and small inputs)
-	startPos := 0
-	if len(b) >= simdChunkSize {
-		// Start from where SIMD left off
-		startPos = (len(b) / simdChunkSize) * simdChunkSize
-		// Need to check one byte before startPos in case CR was at boundary
-		if startPos > 0 {
-			startPos--
-		}
+	// CR found - check if followed by LF
+	if b[idx+1] == '\n' {
+		return true
 	}
-	for i := startPos; i < len(b)-1; i++ {
-		if b[i] == '\r' && b[i+1] == '\n' {
+
+	// Multiple CRs case: continue searching
+	for {
+		next := bytes.IndexByte(b[idx+1:], '\r')
+		if next == -1 {
+			return false
+		}
+		idx = idx + 1 + next
+		if idx >= len(b)-1 {
+			return false
+		}
+		if b[idx+1] == '\n' {
 			return true
 		}
 	}
-	return false
 }
 
 // allocateRecord returns a record slice, reusing the previous one if ReuseRecord is enabled.

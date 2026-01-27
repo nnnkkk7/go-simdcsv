@@ -160,56 +160,20 @@ func unescapeDoubleQuotesScalar(s string) string {
 func unescapeDoubleQuotesSIMD(s string) string {
 	data := unsafe.Slice(unsafe.StringData(s), len(s))
 	quoteCmp := archsimd.BroadcastInt8x32('"')
-
-	// First pass: check if there are any double quotes using SIMD
-	hasDoubleQuote := false
+	var result []byte
+	lastWritten := 0
+	skipNextQuote := false
 	i := 0
 	for i+32 <= len(data) {
 		chunk := archsimd.LoadInt8x32((*[32]int8)(unsafe.Pointer(&data[i])))
 		mask := chunk.Equal(quoteCmp).ToBits()
 
-		if mask != 0 {
-			// Check if any quotes are followed by another quote
-			for mask != 0 {
-				pos := bits.TrailingZeros32(mask)
-				absPos := i + pos
-				if absPos+1 < len(data) && data[absPos+1] == '"' {
-					hasDoubleQuote = true
-					break
-				}
-				mask &= ^(uint32(1) << pos)
+		if skipNextQuote {
+			if mask&1 != 0 {
+				mask &^= 1
 			}
-			if hasDoubleQuote {
-				break
-			}
+			skipNextQuote = false
 		}
-		i += 32
-	}
-
-	// Check remaining bytes if no double quote found yet
-	if !hasDoubleQuote {
-		for ; i < len(data)-1; i++ {
-			if data[i] == '"' && data[i+1] == '"' {
-				hasDoubleQuote = true
-				break
-			}
-		}
-	}
-
-	// Fast path: no double quotes found
-	if !hasDoubleQuote {
-		return s
-	}
-
-	// Second pass: build result with double quotes removed
-	// Pre-allocate with estimated size (original - number of removed quotes)
-	result := make([]byte, 0, len(s))
-	lastWritten := 0
-
-	i = 0
-	for i+32 <= len(data) {
-		chunk := archsimd.LoadInt8x32((*[32]int8)(unsafe.Pointer(&data[i])))
-		mask := chunk.Equal(quoteCmp).ToBits()
 
 		if mask != 0 {
 			for mask != 0 {
@@ -218,12 +182,17 @@ func unescapeDoubleQuotesSIMD(s string) string {
 
 				if absPos+1 < len(data) && data[absPos+1] == '"' {
 					// Found double quote - write up to and including first quote
+					if result == nil {
+						result = make([]byte, 0, len(s))
+					}
 					result = append(result, s[lastWritten:absPos+1]...)
 					lastWritten = absPos + 2 // Skip the second quote
 					// Clear both bits if second quote is in same chunk
 					mask &= ^(uint32(1) << pos)
 					if pos+1 < 32 {
 						mask &= ^(uint32(1) << (pos + 1))
+					} else {
+						skipNextQuote = true
 					}
 					continue
 				}
@@ -234,8 +203,14 @@ func unescapeDoubleQuotesSIMD(s string) string {
 	}
 
 	// Process remaining bytes
+	if skipNextQuote && i < len(data) && data[i] == '"' {
+		i++
+	}
 	for i < len(data)-1 {
 		if data[i] == '"' && data[i+1] == '"' {
+			if result == nil {
+				result = make([]byte, 0, len(s))
+			}
 			result = append(result, s[lastWritten:i+1]...)
 			lastWritten = i + 2
 			i += 2
@@ -244,10 +219,11 @@ func unescapeDoubleQuotesSIMD(s string) string {
 		i++
 	}
 
-	// Append remaining content
+	if result == nil {
+		return s
+	}
 	if lastWritten < len(s) {
 		result = append(result, s[lastWritten:]...)
 	}
-
 	return string(result)
 }
