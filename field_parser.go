@@ -110,6 +110,19 @@ func parseBuffer(buf []byte, sr *scanResult) *parseResult {
 	// Check if pool capacity is sufficient, otherwise reallocate
 	estimatedFields := len(buf) / avgFieldLenEstimate
 	estimatedRows := len(buf) / avgRowLenEstimate
+	if sr != nil {
+		// Use delimiter counts from scan to size more accurately.
+		if len(buf) > 0 {
+			countFields := sr.separatorCount + sr.newlineCount + 1
+			if countFields > estimatedFields {
+				estimatedFields = countFields
+			}
+			countRows := sr.newlineCount + 1
+			if countRows > estimatedRows {
+				estimatedRows = countRows
+			}
+		}
+	}
 	if cap(result.fields) < estimatedFields {
 		result.fields = make([]fieldInfo, 0, estimatedFields)
 	}

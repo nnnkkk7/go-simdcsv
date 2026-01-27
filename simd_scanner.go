@@ -94,15 +94,18 @@ type scanResult struct {
 	separatorMasks []uint64 // Separator masks per chunk
 	newlineMasks   []uint64 // Newline masks per chunk (CRLF normalized)
 	chunkHasDQ     []bool   // Per-chunk flag: true if chunk contains escaped double quotes
+	chunkHasQuote  []bool   // Per-chunk flag: true if chunk contains any quote
 	hasQuotes      bool     // True if any quote characters exist in input
 	finalQuoted    uint64   // Final quote state
 	chunkCount     int      // Number of processed chunks
 	lastChunkBits  int      // Valid bits in last chunk (if < 64)
+	separatorCount int      // Total separators (after quote invalidation)
+	newlineCount   int      // Total newlines (after quote invalidation)
 }
 
 // scanResultPoolCapacity is the pre-allocated slice capacity for pooled scanResult objects.
-// 1024 chunks = ~64KB input (1024 * 64 bytes per chunk).
-const scanResultPoolCapacity = 1024
+// 64 chunks = ~4KB input (64 * 64 bytes per chunk) - small default, grows as needed.
+const scanResultPoolCapacity = 64
 
 // scanResultPool provides reusable scanResult objects to reduce allocations.
 var scanResultPool = sync.Pool{
@@ -112,6 +115,7 @@ var scanResultPool = sync.Pool{
 			separatorMasks: make([]uint64, 0, scanResultPoolCapacity),
 			newlineMasks:   make([]uint64, 0, scanResultPoolCapacity),
 			chunkHasDQ:     make([]bool, 0, scanResultPoolCapacity),
+			chunkHasQuote:  make([]bool, 0, scanResultPoolCapacity),
 		}
 	},
 }
@@ -124,10 +128,15 @@ func (sr *scanResult) reset() {
 	if cap(sr.chunkHasDQ) > 0 {
 		sr.chunkHasDQ = sr.chunkHasDQ[:0]
 	}
+	if cap(sr.chunkHasQuote) > 0 {
+		sr.chunkHasQuote = sr.chunkHasQuote[:0]
+	}
 	sr.hasQuotes = false
 	sr.finalQuoted = 0
 	sr.chunkCount = 0
 	sr.lastChunkBits = 0
+	sr.separatorCount = 0
+	sr.newlineCount = 0
 }
 
 // releaseScanResult returns a scanResult to the pool for reuse.
@@ -170,6 +179,11 @@ func generateMasksAVX512(data []byte, separator byte) (quote, sep, cr, nl uint64
 	crCmp := archsimd.BroadcastInt8x32('\r')
 	nlCmp := archsimd.BroadcastInt8x32('\n')
 
+	return generateMasksAVX512WithCmp(data, quoteCmp, sepCmp, crCmp, nlCmp)
+}
+
+// generateMasksAVX512WithCmp is an AVX-512 mask generator that reuses pre-broadcasted comparators.
+func generateMasksAVX512WithCmp(data []byte, quoteCmp, sepCmp, crCmp, nlCmp archsimd.Int8x32) (quote, sep, cr, nl uint64) {
 	// Process low simdHalfChunk bytes (positions 0-31)
 	// Precondition: data is at least simdChunkSize bytes (guaranteed by caller)
 	low := archsimd.LoadInt8x32((*[simdHalfChunk]int8)(unsafe.Pointer(&data[0])))
@@ -350,6 +364,10 @@ func scanBuffer(buf []byte, separatorChar byte) *scanResult {
 	result.reset()
 	result.chunkCount = chunkCount
 
+	// NOTE: Pre-broadcasting AVX-512 comparators was attempted but removed because
+	// declaring archsimd.Int8x32 variables causes Go to emit AVX zeroing instructions
+	// even before the conditional check, causing SIGILL on CPUs without AVX support.
+
 	// Pre-size all mask slices to chunkCount for index-based assignment (avoids append overhead)
 	// When capacity is insufficient, grow by 2x to reduce future reallocations
 	if cap(result.quoteMasks) < chunkCount {
@@ -390,6 +408,18 @@ func scanBuffer(buf []byte, separatorChar byte) *scanResult {
 		// Clear the slice (reset only truncates, doesn't zero)
 		for i := range result.chunkHasDQ {
 			result.chunkHasDQ[i] = false
+		}
+	}
+	if cap(result.chunkHasQuote) < chunkCount {
+		newCap := chunkCount
+		if newCap < cap(result.chunkHasQuote)*2 {
+			newCap = cap(result.chunkHasQuote) * 2
+		}
+		result.chunkHasQuote = make([]bool, chunkCount, newCap)
+	} else {
+		result.chunkHasQuote = result.chunkHasQuote[:chunkCount]
+		for i := range result.chunkHasQuote {
+			result.chunkHasQuote[i] = false
 		}
 	}
 
@@ -500,11 +530,20 @@ func scanBuffer(buf []byte, separatorChar byte) *scanResult {
 		// Track if any quotes exist in the input (for fast path optimization)
 		if quoteMaskOut != 0 {
 			result.hasQuotes = true
+			result.chunkHasQuote[chunkIdx] = true
 		}
 
 		// Record chunks that have double quotes (using bool array instead of []int)
 		if hasDoubleQuote {
 			result.chunkHasDQ[chunkIdx] = true
+		}
+
+		// Accumulate counts for preallocation sizing
+		if sepMaskOut != 0 {
+			result.separatorCount += bits.OnesCount64(sepMaskOut)
+		}
+		if newlineMaskOut != 0 {
+			result.newlineCount += bits.OnesCount64(newlineMaskOut)
 		}
 
 		// Slide masks: current = next, compute new next for chunkIdx+2

@@ -22,6 +22,8 @@ func ParseBytes(data []byte, comma rune) ([][]string, error) {
 
 	// Release parseResult back to pool
 	releaseParseResult(pr)
+	// Release scanResult back to pool
+	releaseScanResult(sr)
 
 	return records, nil
 }
@@ -41,6 +43,7 @@ func ParseBytesStreaming(data []byte, comma rune, callback func([]string) error)
 	// Parse: Extract fields and rows from scan result
 	pr := parseBuffer(data, sr)
 	defer releaseParseResult(pr)
+	defer releaseScanResult(sr)
 
 	if pr == nil || len(pr.rows) == 0 {
 		return nil

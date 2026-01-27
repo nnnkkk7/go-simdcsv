@@ -68,9 +68,11 @@ func (r *Reader) buildRecordWithValidation(row rowInfo, rowIdx int) ([]string, e
 
 		// Validate quotes unless LazyQuotes is enabled or no quotes exist in input
 		if !r.LazyQuotes && r.hasQuotes {
-			if err := r.validateFieldQuotes(rawStart, rawEnd, row.lineNum); err != nil {
-				// Build partial record from accumulated content
-				return r.buildPartialRecord(i), err
+			if r.fieldMayContainQuote(rawStart, rawEnd) {
+				if err := r.validateFieldQuotesWithField(field, rawStart, rawEnd, row.lineNum); err != nil {
+					// Build partial record from accumulated content
+					return r.buildPartialRecord(i), err
+				}
 			}
 		}
 
