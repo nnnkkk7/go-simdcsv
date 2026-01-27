@@ -6,6 +6,12 @@
 - refactor: enhance error handling and improve code clarity by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/57
 - chore: remove unused code by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/58
 
+## [v0.0.12](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.11...v0.0.12) - 2026-01-27
+- docs: add performance comparison by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/54
+- docs: update readme by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/56
+- refactor: enhance error handling and improve code clarity by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/57
+- chore: remove unused code by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/58
+
 ## [v0.0.11](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.10...v0.0.11) - 2026-01-27
 - ci: add cpu check by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/42
 - ci: add pprof option by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/44
