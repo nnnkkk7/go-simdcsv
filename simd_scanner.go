@@ -4,10 +4,10 @@ package simdcsv
 
 import (
 	"math/bits"
+	"simd/archsimd"
 	"unsafe"
 
 	"golang.org/x/sys/cpu"
-	"simd/archsimd"
 )
 
 // =============================================================================
