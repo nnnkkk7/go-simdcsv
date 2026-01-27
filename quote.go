@@ -158,9 +158,6 @@ func unescapeDoubleQuotesScalar(s string) string {
 
 // unescapeDoubleQuotesSIMD uses SIMD to find double quotes and unescape them.
 func unescapeDoubleQuotesSIMD(s string) string {
-	if len(s) < simdChunkSize {
-		return unescapeDoubleQuotesScalar(s)
-	}
 	data := unsafe.Slice(unsafe.StringData(s), len(s))
 	quoteCmp := archsimd.BroadcastInt8x64('"')
 	var result []byte

@@ -105,10 +105,10 @@ type scanResult struct {
 }
 
 // scanResultPoolCapacity is the pre-allocated slice capacity for pooled scanResult objects.
-// 2048 chunks = ~128KB input (2048 * 64 bytes per chunk) - covers most typical CSV files.
-// Increased from 256 to reduce ensureUint64SliceCap reallocations observed in profiling.
-// For 10K-row CSV (~600KB), this covers ~13% with initial capacity, reducing reallocs.
-const scanResultPoolCapacity = 2048
+// 512 chunks = ~32KB input (512 * 64 bytes per chunk) - balances small and large files.
+// Note: Larger values reduce reallocations for big files but increase overhead for small files.
+// The 25% headroom in ensureUint64SliceCap helps reduce reallocation frequency.
+const scanResultPoolCapacity = 512
 
 // scanResultPool provides reusable scanResult objects to reduce allocations.
 var scanResultPool = sync.Pool{
