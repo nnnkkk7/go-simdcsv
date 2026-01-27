@@ -11,8 +11,8 @@ func (r *Reader) fieldMayContainQuote(rawStart, rawEnd uint64) bool {
 	if rawEnd <= rawStart {
 		return false
 	}
-	startChunk := int(rawStart / simdChunkSize)
-	endChunk := int((rawEnd - 1) / simdChunkSize)
+	startChunk := int(rawStart / simdChunkSize)   //nolint:gosec // G115: rawStart bounded by buffer size (max 2GB)
+	endChunk := int((rawEnd - 1) / simdChunkSize) //nolint:gosec // G115: rawEnd bounded by buffer size (max 2GB)
 	if startChunk < 0 {
 		return true
 	}
