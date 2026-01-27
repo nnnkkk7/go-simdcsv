@@ -65,7 +65,7 @@ func anyChunkHasQuote(chunks []bool, start, end int) bool {
 
 // extractFieldBytes returns the raw bytes for a field, or (nil, false) if bounds are invalid.
 func (r *Reader) extractFieldBytes(rawStart, rawEnd uint64) ([]byte, bool) {
-	bufLen := uint64(len(r.state.rawBuffer)) //nolint:gosec // G115
+	bufLen := uint64(len(r.state.rawBuffer))
 	if rawStart >= bufLen || rawEnd > bufLen || rawStart >= rawEnd {
 		return nil, false
 	}
@@ -130,7 +130,7 @@ func (r *Reader) validateQuotedFieldFromMetadata(raw []byte, rawStart uint64, fi
 
 	// Step 3: Verify closing quote at expected position
 	// field.length is content length (between quotes), so closing quote is at length + 1
-	closingIdx := int(field.length) + 1 //nolint:gosec // G115
+	closingIdx := int(field.length) + 1
 	if !hasClosingQuoteAt(raw, closingIdx) {
 		return r.quoteErrorAt(lineNum, rawStart, min(closingIdx+1, len(raw)))
 	}

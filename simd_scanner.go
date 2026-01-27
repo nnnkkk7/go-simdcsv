@@ -515,7 +515,6 @@ func scanBufferWithGenerator(buf []byte, gen maskGenerator) *scanResult {
 		processChunk(chunkIdx, curMasks, nextMasks, curValidBits, &state, result)
 
 		curMasks = nextMasks
-		curValidBits = simdChunkSize
 		nextMasks, curValidBits = generateNextLookahead(buf, chunkIdx, chunkCount, gen, result)
 	}
 

@@ -55,7 +55,7 @@ func (r *Reader) getFieldsForRow(row rowInfo, fieldCount int) []fieldInfo {
 }
 
 // processField handles a single field: appends content and records metadata.
-func (r *Reader) processField(field fieldInfo, fieldIdx int, lineNum int) {
+func (r *Reader) processField(field fieldInfo, fieldIdx, lineNum int) {
 	rawStart, rawEnd := uint64(field.rawStart()), uint64(field.rawEnd())
 
 	r.appendFieldContent(field, rawStart, rawEnd)

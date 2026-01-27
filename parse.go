@@ -150,7 +150,7 @@ func extractFieldBytes(buf []byte, field fieldInfo) []byte {
 
 // transformContent applies double-quote unescaping and CRLF normalization.
 // Mechanism: pure transformation of bytes without policy decisions.
-func transformContent(content []byte, dst []byte) []byte {
+func transformContent(content, dst []byte) []byte {
 	for i := 0; i < len(content); i++ {
 		b := content[i]
 		if b == '"' && i+1 < len(content) && content[i+1] == '"' {
