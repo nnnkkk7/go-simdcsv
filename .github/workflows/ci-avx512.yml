@@ -34,11 +34,18 @@ jobs:
 
       - name: Verify AVX-512 Support
         run: |
+          set -euo pipefail
           echo "=== CPU Info ==="
           lscpu | grep -E "Model name|CPU\(s\)|Thread|Core|Socket"
           echo ""
           echo "=== Required AVX-512 Flags (avx512f, avx512bw, avx512vl) ==="
           grep -oE 'avx512(f|bw|vl)' /proc/cpuinfo | sort -u
+          for f in avx512f avx512bw avx512vl; do
+            if ! grep -qE "(^|[[:space:]])${f}([[:space:]]|$)" /proc/cpuinfo; then
+              echo "Missing required CPU flag: ${f}"
+              exit 1
+            fi
+          done
           echo ""
           echo "=== Go Version & GOEXPERIMENT ==="
           go version
