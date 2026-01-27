@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.0.10](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.9...v0.0.10) - 2026-01-27
+- refactor: replace postProcChunks with chunkHasDQ for double quote by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/39
+- refactor: implement object pooling for parseResult and scanResult by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/41
+
 ## [v0.0.9](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.8...v0.0.9) - 2026-01-27
 - refactor: optimize field processing by simplifying raw field calculation by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/32
 - refactor: enhance fieldInfo structure and optimize raw field calculations by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/34
