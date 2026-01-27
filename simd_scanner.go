@@ -105,9 +105,10 @@ type scanResult struct {
 }
 
 // scanResultPoolCapacity is the pre-allocated slice capacity for pooled scanResult objects.
-// 256 chunks = ~16KB input (256 * 64 bytes per chunk) - covers most typical CSV files.
-// Increased from 64 to reduce ensureUint64SliceCap reallocations observed in profiling.
-const scanResultPoolCapacity = 256
+// 2048 chunks = ~128KB input (2048 * 64 bytes per chunk) - covers most typical CSV files.
+// Increased from 256 to reduce ensureUint64SliceCap reallocations observed in profiling.
+// For 10K-row CSV (~600KB), this covers ~13% with initial capacity, reducing reallocs.
+const scanResultPoolCapacity = 2048
 
 // scanResultPool provides reusable scanResult objects to reduce allocations.
 var scanResultPool = sync.Pool{
@@ -153,14 +154,20 @@ func releaseScanResult(sr *scanResult) {
 
 // ensureUint64SliceCap ensures slice has at least required length with 2x growth.
 // Returns the slice with length set to required.
+// Note: This creates a new slice if capacity is insufficient; the old slice's
+// capacity is lost but this is acceptable since pooled objects start with
+// sufficient capacity (scanResultPoolCapacity) for most use cases.
 func ensureUint64SliceCap(s []uint64, required int) []uint64 {
 	if cap(s) >= required {
 		return s[:required]
 	}
+	// Use max of 2x growth or required capacity
 	newCap := cap(s) * 2
 	if newCap < required {
 		newCap = required
 	}
+	// Add 25% headroom to reduce future reallocations
+	newCap = newCap + newCap/4
 	return make([]uint64, required, newCap)
 }
 
@@ -172,10 +179,13 @@ func ensureBoolSliceCap(s []bool, required int) []bool {
 		clear(s)
 		return s
 	}
+	// Use max of 2x growth or required capacity
 	newCap := cap(s) * 2
 	if newCap < required {
 		newCap = required
 	}
+	// Add 25% headroom to reduce future reallocations
+	newCap = newCap + newCap/4
 	return make([]bool, required, newCap)
 }
 

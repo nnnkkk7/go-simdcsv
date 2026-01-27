@@ -23,12 +23,21 @@ type parseResult struct {
 	rows   []rowInfo   // All row information
 }
 
+// parseResultPoolFieldCap is the initial field capacity for pooled parseResult.
+// 4096 fields covers ~800 rows with 5 fields each (typical CSV).
+// fieldInfo is 12 bytes, so 4096 * 12 = ~48KB initial allocation.
+const parseResultPoolFieldCap = 4096
+
+// parseResultPoolRowCap is the initial row capacity for pooled parseResult.
+// 1024 rows with rowInfo at 24 bytes = ~24KB initial allocation.
+const parseResultPoolRowCap = 1024
+
 // parseResultPool provides reusable parseResult objects to reduce allocations
 var parseResultPool = sync.Pool{
 	New: func() interface{} {
 		return &parseResult{
-			fields: make([]fieldInfo, 0, 512), // Smaller initial (6KB)
-			rows:   make([]rowInfo, 0, 128),   // Smaller initial (1.5KB)
+			fields: make([]fieldInfo, 0, parseResultPoolFieldCap),
+			rows:   make([]rowInfo, 0, parseResultPoolRowCap),
 		}
 	},
 }
