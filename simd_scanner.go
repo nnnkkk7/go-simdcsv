@@ -21,7 +21,7 @@ import (
 // See: https://github.com/golang/go/issues/73787 (archsimd proposal)
 // See: https://go.dev/doc/go1.26 (Go 1.26 Release Notes)
 //
-// NOTE: The archsimd.Int8x32.Equal().ToBits() method internally uses the VPMOVB2M
+// NOTE: The archsimd.Int8x64.Equal().ToBits() method internally uses the VPMOVB2M
 // instruction (AVX-512BW). This instruction causes SIGILL (illegal instruction) on
 // CPUs that do not support AVX-512, including GitHub Actions ubuntu-latest runners,
 // most CI environments, and older CPUs.
@@ -196,7 +196,7 @@ func generateMasks(data []byte, separator byte) (quote, sep, cr, nl uint64) {
 // generateMasksAVX512 generates masks using AVX-512 SIMD instructions.
 // Precondition: data is at least simdChunkSize bytes.
 //
-// NOTE: This implementation uses archsimd.Int8x32.Equal().ToBits().
+// NOTE: This implementation uses archsimd.Int8x64.Equal().ToBits().
 // ToBits() internally generates the VPMOVB2M instruction (requires AVX-512BW),
 // so this function cannot be executed on CPUs without AVX-512 support.
 //
@@ -204,38 +204,23 @@ func generateMasks(data []byte, separator byte) (quote, sep, cr, nl uint64) {
 // this implementation could be updated to work with AVX2 as well.
 // Currently, archsimd's ToBits() requires AVX-512.
 func generateMasksAVX512(data []byte, separator byte) (quote, sep, cr, nl uint64) {
-	// Broadcast comparison values to all lanes of 256-bit vectors
-	quoteCmp := archsimd.BroadcastInt8x32('"')
-	sepCmp := archsimd.BroadcastInt8x32(int8(separator))
-	crCmp := archsimd.BroadcastInt8x32('\r')
-	nlCmp := archsimd.BroadcastInt8x32('\n')
+	// Broadcast comparison values to all lanes of 512-bit vectors
+	quoteCmp := archsimd.BroadcastInt8x64('"')
+	sepCmp := archsimd.BroadcastInt8x64(int8(separator))
+	crCmp := archsimd.BroadcastInt8x64('\r')
+	nlCmp := archsimd.BroadcastInt8x64('\n')
 
 	return generateMasksAVX512WithCmp(data, quoteCmp, sepCmp, crCmp, nlCmp)
 }
 
 // generateMasksAVX512WithCmp is an AVX-512 mask generator that reuses pre-broadcasted comparators.
-func generateMasksAVX512WithCmp(data []byte, quoteCmp, sepCmp, crCmp, nlCmp archsimd.Int8x32) (quote, sep, cr, nl uint64) {
-	// Process low simdHalfChunk bytes (positions 0-31)
+func generateMasksAVX512WithCmp(data []byte, quoteCmp, sepCmp, crCmp, nlCmp archsimd.Int8x64) (quote, sep, cr, nl uint64) {
 	// Precondition: data is at least simdChunkSize bytes (guaranteed by caller)
-	low := archsimd.LoadInt8x32((*[simdHalfChunk]int8)(unsafe.Pointer(&data[0])))
-	quoteLowMask := low.Equal(quoteCmp).ToBits()
-	sepLowMask := low.Equal(sepCmp).ToBits()
-	crLowMask := low.Equal(crCmp).ToBits()
-	nlLowMask := low.Equal(nlCmp).ToBits()
-
-	// Process high simdHalfChunk bytes (positions 32-63)
-	high := archsimd.LoadInt8x32((*[simdHalfChunk]int8)(unsafe.Pointer(&data[simdHalfChunk])))
-	quoteHighMask := high.Equal(quoteCmp).ToBits()
-	sepHighMask := high.Equal(sepCmp).ToBits()
-	crHighMask := high.Equal(crCmp).ToBits()
-	nlHighMask := high.Equal(nlCmp).ToBits()
-
-	// Combine into 64-bit masks (low bits 0-31, high bits 32-63)
-	quote = uint64(quoteLowMask) | (uint64(quoteHighMask) << 32)
-	sep = uint64(sepLowMask) | (uint64(sepHighMask) << 32)
-	cr = uint64(crLowMask) | (uint64(crHighMask) << 32)
-	nl = uint64(nlLowMask) | (uint64(nlHighMask) << 32)
-
+	chunk := archsimd.LoadInt8x64((*[simdChunkSize]int8)(unsafe.Pointer(&data[0])))
+	quote = chunk.Equal(quoteCmp).ToBits()
+	sep = chunk.Equal(sepCmp).ToBits()
+	cr = chunk.Equal(crCmp).ToBits()
+	nl = chunk.Equal(nlCmp).ToBits()
 	return
 }
 
@@ -293,7 +278,7 @@ func generateMasksPadded(data []byte, separator byte) (quote, sep, cr, nl uint64
 }
 
 // generateMasksPaddedWithCmp is the AVX-512 version of generateMasksPadded that reuses comparators.
-func generateMasksPaddedWithCmp(data []byte, quoteCmp, sepCmp, crCmp, nlCmp archsimd.Int8x32) (quote, sep, cr, nl uint64, validBits int) {
+func generateMasksPaddedWithCmp(data []byte, quoteCmp, sepCmp, crCmp, nlCmp archsimd.Int8x64) (quote, sep, cr, nl uint64, validBits int) {
 	validBits = len(data)
 	if validBits == 0 {
 		return 0, 0, 0, 0, 0
@@ -410,7 +395,7 @@ func scanBufferScalar(buf []byte, separatorChar byte) *scanResult {
 	result.chunkCount = chunkCount
 
 	// NOTE: Pre-broadcasting AVX-512 comparators was attempted but removed because
-	// declaring archsimd.Int8x32 variables causes Go to emit AVX zeroing instructions
+	// declaring archsimd.Int8x64 variables causes Go to emit AVX zeroing instructions
 	// even before the conditional check, causing SIGILL on CPUs without AVX support.
 
 	// Pre-size all mask slices to chunkCount for index-based assignment (avoids append overhead)
@@ -626,10 +611,10 @@ func scanBufferAVX512(buf []byte, separatorChar byte) *scanResult {
 	result.reset()
 	result.chunkCount = chunkCount
 
-	quoteCmp := archsimd.BroadcastInt8x32('"')
-	sepCmp := archsimd.BroadcastInt8x32(int8(separatorChar))
-	crCmp := archsimd.BroadcastInt8x32('\r')
-	nlCmp := archsimd.BroadcastInt8x32('\n')
+	quoteCmp := archsimd.BroadcastInt8x64('"')
+	sepCmp := archsimd.BroadcastInt8x64(int8(separatorChar))
+	crCmp := archsimd.BroadcastInt8x64('\r')
+	nlCmp := archsimd.BroadcastInt8x64('\n')
 
 	// Pre-size all mask slices to chunkCount for index-based assignment (avoids append overhead)
 	result.quoteMasks = ensureUint64SliceCap(result.quoteMasks, chunkCount)
