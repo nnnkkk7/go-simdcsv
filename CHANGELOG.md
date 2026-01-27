@@ -1,5 +1,18 @@
 # Changelog
 
+## [v0.0.11](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.10...v0.0.11) - 2026-01-27
+- ci: add cpu check by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/42
+- ci: add pprof option by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/44
+- refactor: enhance parsing efficiency with improved field and row estimation by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/45
+- refactor: optimize chunk processing and mask handling in field parsing by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/46
+- refactor: optimize field content handling and enhance SIMD scanning performance by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/47
+- ci: fix benchmart option by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/48
+- refactor: enhance record building and parsing efficiency with CR handling by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/49
+- refactor: update SIMD scanning to utilize archsimd.Int8x64  by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/50
+- refactor: optimize parseResult and scanResult pooling for improved me… by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/51
+- refactor: adjust pooling capacities for parseResult and scanResult by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/52
+- refactor: improve quoted field validation by leveraging parsed metadata by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/53
+
 ## [v0.0.10](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.9...v0.0.10) - 2026-01-27
 - refactor: replace postProcChunks with chunkHasDQ for double quote by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/39
 - refactor: implement object pooling for parseResult and scanResult by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/41
