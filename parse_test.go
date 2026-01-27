@@ -236,7 +236,7 @@ func TestParseBytesStreaming_CustomSeparator(t *testing.T) {
 // =============================================================================
 
 func TestBuildRecords_Nil(t *testing.T) {
-	result := buildRecords(nil, nil)
+	result := buildRecords(nil, nil, false)
 	if result != nil {
 		t.Errorf("buildRecords(nil, nil) = %v, want nil", result)
 	}
@@ -247,7 +247,7 @@ func TestBuildRecords_EmptyRows(t *testing.T) {
 		fields: []fieldInfo{},
 		rows:   []rowInfo{},
 	}
-	result := buildRecords([]byte(""), pr)
+	result := buildRecords([]byte(""), pr, false)
 	if result != nil {
 		t.Errorf("buildRecords with empty rows = %v, want nil", result)
 	}
@@ -269,7 +269,7 @@ func TestBuildRecord(t *testing.T) {
 		},
 	}
 
-	record := buildRecord(buf, pr, pr.rows[0])
+	record := buildRecord(buf, pr, pr.rows[0], false)
 
 	if len(record) != 2 {
 		t.Fatalf("expected 2 fields, got %d", len(record))

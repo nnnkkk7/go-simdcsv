@@ -96,6 +96,7 @@ type scanResult struct {
 	chunkHasDQ     []bool   // Per-chunk flag: true if chunk contains escaped double quotes
 	chunkHasQuote  []bool   // Per-chunk flag: true if chunk contains any quote
 	hasQuotes      bool     // True if any quote characters exist in input
+	hasCR          bool     // True if any carriage return exists in input
 	finalQuoted    uint64   // Final quote state
 	chunkCount     int      // Number of processed chunks
 	lastChunkBits  int      // Valid bits in last chunk (if < 64)
@@ -104,8 +105,9 @@ type scanResult struct {
 }
 
 // scanResultPoolCapacity is the pre-allocated slice capacity for pooled scanResult objects.
-// 64 chunks = ~4KB input (64 * 64 bytes per chunk) - small default, grows as needed.
-const scanResultPoolCapacity = 64
+// 256 chunks = ~16KB input (256 * 64 bytes per chunk) - covers most typical CSV files.
+// Increased from 64 to reduce ensureUint64SliceCap reallocations observed in profiling.
+const scanResultPoolCapacity = 256
 
 // scanResultPool provides reusable scanResult objects to reduce allocations.
 var scanResultPool = sync.Pool{
@@ -132,6 +134,7 @@ func (sr *scanResult) reset() {
 		sr.chunkHasQuote = sr.chunkHasQuote[:0]
 	}
 	sr.hasQuotes = false
+	sr.hasCR = false
 	sr.finalQuoted = 0
 	sr.chunkCount = 0
 	sr.lastChunkBits = 0
@@ -492,6 +495,10 @@ func scanBufferScalar(buf []byte, separatorChar byte) *scanResult {
 			}
 		}
 
+		if crMask != 0 {
+			result.hasCR = true
+		}
+
 		// Save the initial quoted state for newline invalidation
 		if quoteMask == 0 {
 			if state.quoted == 0 {
@@ -683,6 +690,10 @@ func scanBufferAVX512(buf []byte, separatorChar byte) *scanResult {
 			} else {
 				newlineMaskOut |= uint64(1) << 63
 			}
+		}
+
+		if crMask != 0 {
+			result.hasCR = true
 		}
 
 		if quoteMask == 0 {

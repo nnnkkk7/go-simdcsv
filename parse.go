@@ -18,7 +18,7 @@ func ParseBytes(data []byte, comma rune) ([][]string, error) {
 	pr := parseBuffer(data, sr)
 
 	// Build: Convert parseResult to [][]string
-	records := buildRecords(data, pr)
+	records := buildRecords(data, pr, sr.hasCR)
 
 	// Release parseResult back to pool
 	releaseParseResult(pr)
@@ -51,7 +51,7 @@ func ParseBytesStreaming(data []byte, comma rune, callback func([]string) error)
 
 	// Build: Invoke callback for each record
 	for _, row := range pr.rows {
-		record := buildRecord(data, pr, row)
+		record := buildRecord(data, pr, row, sr.hasCR)
 		if err := callback(record); err != nil {
 			return err
 		}
@@ -64,7 +64,7 @@ func ParseBytesStreaming(data []byte, comma rune, callback func([]string) error)
 // 1. Accumulating all field content into a single recordBuffer per record
 // 2. Converting to string once per record
 // 3. Zero-copy slicing to create individual field strings
-func buildRecords(buf []byte, pr *parseResult) [][]string {
+func buildRecords(buf []byte, pr *parseResult, hasCR bool) [][]string {
 	if pr == nil || len(pr.rows) == 0 {
 		return nil
 	}
@@ -87,7 +87,7 @@ func buildRecords(buf []byte, pr *parseResult) [][]string {
 				break
 			}
 			field := pr.fields[fieldIdx]
-			appendFieldToBuffer(buf, field, &recordBuffer)
+			appendFieldToBuffer(buf, field, &recordBuffer, hasCR)
 			fieldEnds = append(fieldEnds, len(recordBuffer))
 		}
 
@@ -105,7 +105,7 @@ func buildRecords(buf []byte, pr *parseResult) [][]string {
 }
 
 // appendFieldToBuffer appends field content to buffer with inline unescape and CRLF normalization.
-func appendFieldToBuffer(buf []byte, field fieldInfo, recordBuffer *[]byte) {
+func appendFieldToBuffer(buf []byte, field fieldInfo, recordBuffer *[]byte, hasCR bool) {
 	if field.length == 0 {
 		return
 	}
@@ -123,7 +123,7 @@ func appendFieldToBuffer(buf []byte, field fieldInfo, recordBuffer *[]byte) {
 	content := buf[start:end]
 
 	// Check if transformation is needed
-	needsTransform := field.needsUnescape() || containsCRLFBytes(content)
+	needsTransform := field.needsUnescape() || (hasCR && containsCRLFBytes(content))
 	if !needsTransform {
 		// Fast path: append as-is
 		*recordBuffer = append(*recordBuffer, content...)
@@ -146,7 +146,7 @@ func appendFieldToBuffer(buf []byte, field fieldInfo, recordBuffer *[]byte) {
 }
 
 // buildRecord builds a single record from a rowInfo (for streaming API).
-func buildRecord(buf []byte, pr *parseResult, row rowInfo) []string {
+func buildRecord(buf []byte, pr *parseResult, row rowInfo, hasCR bool) []string {
 	var recordBuffer []byte
 	var fieldEnds []int
 
@@ -156,7 +156,7 @@ func buildRecord(buf []byte, pr *parseResult, row rowInfo) []string {
 			break
 		}
 		field := pr.fields[fieldIdx]
-		appendFieldToBuffer(buf, field, &recordBuffer)
+		appendFieldToBuffer(buf, field, &recordBuffer, hasCR)
 		fieldEnds = append(fieldEnds, len(recordBuffer))
 	}
 

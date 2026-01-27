@@ -66,6 +66,7 @@ type Reader struct {
 	nonCommentRecordCount int          // Count of non-comment records returned (for O(1) first record detection)
 	initialized           bool         // Whether scan/parse have been run
 	hasQuotes             bool         // True if input contains any quote characters (for fast path)
+	hasCR                 bool         // True if input contains any CR character (for fast path)
 	chunkHasQuote         []bool       // Per-chunk quote presence (for validation fast path)
 
 	// Extended options (set via NewReaderWithOptions)
@@ -258,6 +259,8 @@ func (r *Reader) initialize() error {
 
 	// Copy hasQuotes flag for fast path optimization
 	r.hasQuotes = r.scanResult.hasQuotes
+	// Copy hasCR flag for CRLF fast path optimization
+	r.hasCR = r.scanResult.hasCR
 	// Copy per-chunk quote presence for validation fast path
 	if len(r.scanResult.chunkHasQuote) > 0 {
 		if cap(r.chunkHasQuote) < len(r.scanResult.chunkHasQuote) {

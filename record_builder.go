@@ -154,6 +154,11 @@ func (r *Reader) appendFieldContent(field fieldInfo, rawStart, rawEnd uint64) {
 		return
 	}
 
+	if !r.hasCR && !field.needsUnescape() {
+		r.recordBuffer = append(r.recordBuffer, content...)
+		return
+	}
+
 	// Check if transformation is needed
 	if !field.needsUnescape() && !containsCRLFBytes(content) {
 		// Fast path: append as-is
