@@ -16,24 +16,22 @@ var (
 )
 
 // DefaultMaxInputSize is the default maximum input size (2GB).
-// This can be overridden via ReaderOptions.MaxInputSize.
-const DefaultMaxInputSize = 2 * 1024 * 1024 * 1024 // 2GB
+const DefaultMaxInputSize = 2 * 1024 * 1024 * 1024
 
 // ParseError represents a parsing error with location information.
 type ParseError struct {
-	StartLine int   // Record start line
-	Line      int   // Error line
-	Column    int   // Error column
+	StartLine int   // Line where the record started
+	Line      int   // Line where the error occurred
+	Column    int   // Column where the error occurred (1-indexed)
 	Err       error // Underlying error
 }
 
-// Error returns a formatted string describing the parse error location and cause.
+// Error returns a formatted error message with location information.
 func (e *ParseError) Error() string {
-	return fmt.Sprintf("parse error on line %d, column %d: %v",
-		e.Line, e.Column, e.Err)
+	return fmt.Sprintf("parse error on line %d, column %d: %v", e.Line, e.Column, e.Err)
 }
 
-// Unwrap returns the underlying error for use with [errors.Is] and [errors.Unwrap].
+// Unwrap returns the underlying error for use with [errors.Is] and [errors.As].
 func (e *ParseError) Unwrap() error {
 	return e.Err
 }

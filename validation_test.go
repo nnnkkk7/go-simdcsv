@@ -59,10 +59,7 @@ func TestValidateFieldQuotes_Valid(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := &Reader{
-				rawBuffer: []byte(tt.input),
-				Comma:     ',',
-			}
+			r := newTestReaderWithBuffer([]byte(tt.input))
 			err := r.validateFieldQuotes(0, uint64(len(tt.input)), 1)
 			if err != nil {
 				t.Errorf("validateFieldQuotes(%q) unexpected error: %v", tt.input, err)
@@ -83,10 +80,7 @@ func TestValidateFieldQuotes_BareQuote(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := &Reader{
-				rawBuffer: []byte(tt.input),
-				Comma:     ',',
-			}
+			r := newTestReaderWithBuffer([]byte(tt.input))
 			err := r.validateFieldQuotes(0, uint64(len(tt.input)), 1)
 			if err == nil {
 				t.Errorf("validateFieldQuotes(%q) expected error, got nil", tt.input)
@@ -108,10 +102,7 @@ func TestValidateFieldQuotes_BareQuote(t *testing.T) {
 
 func TestValidateFieldQuotes_UnclosedQuote(t *testing.T) {
 	input := `"hello`
-	r := &Reader{
-		rawBuffer: []byte(input),
-		Comma:     ',',
-	}
+	r := newTestReaderWithBuffer([]byte(input))
 
 	err := r.validateFieldQuotes(0, uint64(len(input)), 1)
 	if err == nil {
@@ -132,10 +123,7 @@ func TestValidateFieldQuotes_UnclosedQuote(t *testing.T) {
 
 func TestValidateFieldQuotes_TextAfterClosingQuote(t *testing.T) {
 	input := `"hello"world`
-	r := &Reader{
-		rawBuffer: []byte(input),
-		Comma:     ',',
-	}
+	r := newTestReaderWithBuffer([]byte(input))
 
 	err := r.validateFieldQuotes(0, uint64(len(input)), 1)
 	if err == nil {
@@ -173,11 +161,8 @@ func TestValidateFieldQuotes_WithTrimLeadingSpace(t *testing.T) {
 				endPos = idx
 			}
 
-			r := &Reader{
-				rawBuffer:        []byte(tt.input),
-				Comma:            ',',
-				TrimLeadingSpace: true,
-			}
+			r := newTestReaderWithBuffer([]byte(tt.input))
+			r.TrimLeadingSpace = true
 
 			err := r.validateFieldQuotes(0, uint64(endPos), 1)
 			if tt.wantErr && err == nil {
@@ -188,6 +173,13 @@ func TestValidateFieldQuotes_WithTrimLeadingSpace(t *testing.T) {
 			}
 		})
 	}
+}
+
+// newTestReaderWithBuffer creates a Reader with a raw buffer for testing validation.
+func newTestReaderWithBuffer(buf []byte) *Reader {
+	r := &Reader{Comma: ','}
+	r.state.rawBuffer = buf
+	return r
 }
 
 // =============================================================================

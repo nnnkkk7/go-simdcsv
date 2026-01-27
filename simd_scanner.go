@@ -48,22 +48,13 @@ import (
 //   - AVX512VL: 128/256-bit vector support with AVX-512 instructions
 var useAVX512 bool
 
-// SIMD processing constants
+// SIMD processing constants.
 const (
-	// simdChunkSize is the number of bytes processed per SIMD iteration (AVX-512 = 64 bytes).
-	simdChunkSize = 64
-
-	// simdHalfChunk is the size of a half SIMD chunk (AVX2/half AVX-512 = 32 bytes).
-	simdHalfChunk = 32
-
-	// simdMinThreshold is the minimum data size for SIMD optimization to be beneficial.
-	simdMinThreshold = 32
-
-	// avgFieldLenEstimate is the estimated average field length for capacity pre-allocation.
-	avgFieldLenEstimate = 15
-
-	// avgRowLenEstimate is the estimated average row length for capacity pre-allocation.
-	avgRowLenEstimate = 80
+	simdChunkSize       = 64 // bytes per AVX-512 iteration
+	simdHalfChunk       = 32 // bytes for half chunk (AVX2 size)
+	simdMinThreshold    = 32 // minimum size for SIMD benefit
+	avgFieldLenEstimate = 15 // estimated avg field length for preallocation
+	avgRowLenEstimate   = 80 // estimated avg row length for preallocation
 )
 
 func init() {
@@ -82,32 +73,43 @@ func shouldUseSIMD(dataLen int) bool {
 	return useAVX512 && dataLen >= simdMinThreshold
 }
 
-// scanState holds state carried between chunks during SIMD scanning
+// =============================================================================
+// Core Data Structures
+// =============================================================================
+
+// scanState holds state carried between chunks during scanning.
 type scanState struct {
-	quoted        uint64 // Quote state flag (0=outside, ^0=inside)
-	skipNextQuote bool   // Skip quote at next chunk start (for boundary double quotes)
+	quoted        uint64 // 0 = outside quotes, ^0 = inside quotes
+	skipNextQuote bool   // skip first quote of next chunk (boundary double quote)
 }
 
-// scanResult represents the result of SIMD scanning (bitmasks for structural characters)
+// scanResult holds bitmasks for structural characters from scanning.
 type scanResult struct {
-	quoteMasks     []uint64 // Quote masks per chunk
-	separatorMasks []uint64 // Separator masks per chunk
-	newlineMasks   []uint64 // Newline masks per chunk (CRLF normalized)
-	chunkHasDQ     []bool   // Per-chunk flag: true if chunk contains escaped double quotes
-	chunkHasQuote  []bool   // Per-chunk flag: true if chunk contains any quote
-	hasQuotes      bool     // True if any quote characters exist in input
-	hasCR          bool     // True if any carriage return exists in input
-	finalQuoted    uint64   // Final quote state
-	chunkCount     int      // Number of processed chunks
-	lastChunkBits  int      // Valid bits in last chunk (if < 64)
-	separatorCount int      // Total separators (after quote invalidation)
-	newlineCount   int      // Total newlines (after quote invalidation)
+	quoteMasks     []uint64 // quote positions per chunk
+	separatorMasks []uint64 // separator positions per chunk
+	newlineMasks   []uint64 // newline positions per chunk (CRLF normalized)
+	chunkHasDQ     []bool   // chunks containing escaped double quotes
+	chunkHasQuote  []bool   // chunks containing any quote
+	hasQuotes      bool     // input contains quote characters
+	hasCR          bool     // input contains carriage returns
+	finalQuoted    uint64   // quote state after scanning
+	chunkCount     int      // number of chunks processed
+	lastChunkBits  int      // valid bits in final chunk (< 64)
+	separatorCount int      // total separators (outside quotes)
+	newlineCount   int      // total newlines (outside quotes)
 }
 
-// scanResultPoolCapacity is the pre-allocated slice capacity for pooled scanResult objects.
-// 512 chunks = ~32KB input (512 * 64 bytes per chunk) - balances small and large files.
-// Note: Larger values reduce reallocations for big files but increase overhead for small files.
-// The 25% headroom in ensureUint64SliceCap helps reduce reallocation frequency.
+// chunkMasks holds the four mask types for a single 64-byte chunk.
+type chunkMasks struct {
+	quote, sep, cr, nl uint64
+}
+
+// =============================================================================
+// Object Pooling
+// =============================================================================
+
+// scanResultPoolCapacity is the pre-allocated capacity for pooled scanResult slices.
+// 512 chunks = ~32KB input, balancing small and large file performance.
 const scanResultPoolCapacity = 512
 
 // scanResultPool provides reusable scanResult objects to reduce allocations.
@@ -123,17 +125,13 @@ var scanResultPool = sync.Pool{
 	},
 }
 
-// reset clears the scanResult for reuse while preserving underlying slice capacity.
+// reset clears the scanResult for reuse while preserving slice capacity.
 func (sr *scanResult) reset() {
 	sr.quoteMasks = sr.quoteMasks[:0]
 	sr.separatorMasks = sr.separatorMasks[:0]
 	sr.newlineMasks = sr.newlineMasks[:0]
-	if cap(sr.chunkHasDQ) > 0 {
-		sr.chunkHasDQ = sr.chunkHasDQ[:0]
-	}
-	if cap(sr.chunkHasQuote) > 0 {
-		sr.chunkHasQuote = sr.chunkHasQuote[:0]
-	}
+	sr.chunkHasDQ = sr.chunkHasDQ[:0]
+	sr.chunkHasQuote = sr.chunkHasQuote[:0]
 	sr.hasQuotes = false
 	sr.hasCR = false
 	sr.finalQuoted = 0
@@ -144,7 +142,6 @@ func (sr *scanResult) reset() {
 }
 
 // releaseScanResult returns a scanResult to the pool for reuse.
-// The caller must not use the scanResult after calling this function.
 func releaseScanResult(sr *scanResult) {
 	if sr != nil {
 		sr.reset()
@@ -152,50 +149,86 @@ func releaseScanResult(sr *scanResult) {
 	}
 }
 
-// ensureUint64SliceCap ensures slice has at least required length with 2x growth.
-// Returns the slice with length set to required.
-// Note: This creates a new slice if capacity is insufficient; the old slice's
-// capacity is lost but this is acceptable since pooled objects start with
-// sufficient capacity (scanResultPoolCapacity) for most use cases.
+// =============================================================================
+// Slice Utilities
+// =============================================================================
+
+// ensureUint64SliceCap ensures slice has at least required length.
+// Uses 2x growth with 25% headroom when reallocation is needed.
 func ensureUint64SliceCap(s []uint64, required int) []uint64 {
 	if cap(s) >= required {
 		return s[:required]
 	}
-	// Use max of 2x growth or required capacity
-	newCap := cap(s) * 2
-	if newCap < required {
-		newCap = required
-	}
-	// Add 25% headroom to reduce future reallocations
+	newCap := max(cap(s)*2, required)
 	newCap += newCap / 4
 	return make([]uint64, required, newCap)
 }
 
-// ensureBoolSliceCap ensures slice has at least required length with 2x growth.
-// Returns the slice with length set to required and cleared.
+// ensureBoolSliceCap ensures slice has at least required length (cleared).
+// Uses 2x growth with 25% headroom when reallocation is needed.
 func ensureBoolSliceCap(s []bool, required int) []bool {
 	if cap(s) >= required {
 		s = s[:required]
 		clear(s)
 		return s
 	}
-	// Use max of 2x growth or required capacity
-	newCap := cap(s) * 2
-	if newCap < required {
-		newCap = required
-	}
-	// Add 25% headroom to reduce future reallocations
+	newCap := max(cap(s)*2, required)
 	newCap += newCap / 4
 	return make([]bool, required, newCap)
 }
 
-// generateMasks generates 4 types of masks from a simdChunkSize-byte chunk.
-// It detects positions of quote ("), separator, carriage return (\r), and newline (\n).
-// Precondition: data is at least simdChunkSize bytes.
-//
-// NOTE: This function dispatches to AVX-512 or scalar implementation based on the
-// useAVX512 flag. In environments without AVX-512 support (CI, older CPUs), it falls
-// back to the scalar implementation to avoid SIGILL.
+// =============================================================================
+// Mask Generation - Scalar Implementation
+// =============================================================================
+
+// generateMasksScalar generates masks using scalar operations (fallback for non-AVX-512).
+func generateMasksScalar(data []byte, separator byte) (quote, sep, cr, nl uint64) {
+	for i := 0; i < simdChunkSize; i++ {
+		bit := uint64(1) << i
+		switch data[i] {
+		case '"':
+			quote |= bit
+		case separator:
+			sep |= bit
+		case '\r':
+			cr |= bit
+		case '\n':
+			nl |= bit
+		}
+	}
+	return
+}
+
+// =============================================================================
+// Mask Generation - AVX-512 Implementation
+// =============================================================================
+
+// generateMasksAVX512 generates masks using AVX-512 SIMD instructions.
+// Requires AVX-512BW for ToBits() which uses VPMOVB2M instruction.
+func generateMasksAVX512(data []byte, separator byte) (quote, sep, cr, nl uint64) {
+	quoteCmp := archsimd.BroadcastInt8x64('"')
+	sepCmp := archsimd.BroadcastInt8x64(int8(separator))
+	crCmp := archsimd.BroadcastInt8x64('\r')
+	nlCmp := archsimd.BroadcastInt8x64('\n')
+	return generateMasksAVX512WithCmp(data, quoteCmp, sepCmp, crCmp, nlCmp)
+}
+
+// generateMasksAVX512WithCmp generates masks reusing pre-broadcasted comparators.
+func generateMasksAVX512WithCmp(data []byte, quoteCmp, sepCmp, crCmp, nlCmp archsimd.Int8x64) (quote, sep, cr, nl uint64) {
+	chunk := archsimd.LoadInt8x64((*[simdChunkSize]int8)(unsafe.Pointer(&data[0])))
+	return chunk.Equal(quoteCmp).ToBits(),
+		chunk.Equal(sepCmp).ToBits(),
+		chunk.Equal(crCmp).ToBits(),
+		chunk.Equal(nlCmp).ToBits()
+}
+
+// =============================================================================
+// Mask Generation - Unified Dispatch
+// =============================================================================
+
+// generateMasks generates bitmasks for structural characters in a 64-byte chunk.
+// Returns masks for quote, separator, CR, and newline positions.
+// Dispatches to AVX-512 or scalar implementation based on CPU support.
 func generateMasks(data []byte, separator byte) (quote, sep, cr, nl uint64) {
 	if useAVX512 {
 		return generateMasksAVX512(data, separator)
@@ -203,79 +236,19 @@ func generateMasks(data []byte, separator byte) (quote, sep, cr, nl uint64) {
 	return generateMasksScalar(data, separator)
 }
 
-// generateMasksAVX512 generates masks using AVX-512 SIMD instructions.
-// Precondition: data is at least simdChunkSize bytes.
-//
-// NOTE: This implementation uses archsimd.Int8x64.Equal().ToBits().
-// ToBits() internally generates the VPMOVB2M instruction (requires AVX-512BW),
-// so this function cannot be executed on CPUs without AVX-512 support.
-//
-// TODO: If archsimd provides an AVX2-based alternative (using VPMOVMSKB instruction),
-// this implementation could be updated to work with AVX2 as well.
-// Currently, archsimd's ToBits() requires AVX-512.
-func generateMasksAVX512(data []byte, separator byte) (quote, sep, cr, nl uint64) {
-	// Broadcast comparison values to all lanes of 512-bit vectors
-	quoteCmp := archsimd.BroadcastInt8x64('"')
-	sepCmp := archsimd.BroadcastInt8x64(int8(separator))
-	crCmp := archsimd.BroadcastInt8x64('\r')
-	nlCmp := archsimd.BroadcastInt8x64('\n')
-
-	return generateMasksAVX512WithCmp(data, quoteCmp, sepCmp, crCmp, nlCmp)
-}
-
-// generateMasksAVX512WithCmp is an AVX-512 mask generator that reuses pre-broadcasted comparators.
-func generateMasksAVX512WithCmp(data []byte, quoteCmp, sepCmp, crCmp, nlCmp archsimd.Int8x64) (quote, sep, cr, nl uint64) {
-	// Precondition: data is at least simdChunkSize bytes (guaranteed by caller)
-	chunk := archsimd.LoadInt8x64((*[simdChunkSize]int8)(unsafe.Pointer(&data[0])))
-	quote = chunk.Equal(quoteCmp).ToBits()
-	sep = chunk.Equal(sepCmp).ToBits()
-	cr = chunk.Equal(crCmp).ToBits()
-	nl = chunk.Equal(nlCmp).ToBits()
-	return
-}
-
-// generateMasksScalar generates masks using scalar (non-SIMD) operations.
-// This is the fallback implementation for CPUs without AVX-512 support.
-// Precondition: data is at least simdChunkSize bytes.
-func generateMasksScalar(data []byte, separator byte) (quote, sep, cr, nl uint64) {
-	for i := 0; i < simdChunkSize; i++ {
-		b := data[i]
-		bit := uint64(1) << i
-		if b == '"' {
-			quote |= bit
-		}
-		if b == separator {
-			sep |= bit
-		}
-		if b == '\r' {
-			cr |= bit
-		}
-		if b == '\n' {
-			nl |= bit
-		}
-	}
-	return
-}
-
-// generateMasksPadded processes chunks smaller than simdChunkSize bytes.
-// It copies data to a simdChunkSize-byte buffer (stack allocated), generates masks,
-// then masks off invalid bits beyond the actual data length.
-// Returns masks only for valid bytes (remaining bits are 0).
+// generateMasksPadded processes chunks smaller than 64 bytes by zero-padding.
+// Returns masks with bits beyond valid data cleared.
 func generateMasksPadded(data []byte, separator byte) (quote, sep, cr, nl uint64, validBits int) {
 	validBits = len(data)
 	if validBits == 0 {
 		return 0, 0, 0, 0, 0
 	}
 
-	// Create a simdChunkSize-byte padded buffer on the stack
 	var padded [simdChunkSize]byte
 	copy(padded[:], data)
-	// Remaining bytes are zero (won't match any structural characters)
 
-	// Generate masks from the padded buffer
 	quote, sep, cr, nl = generateMasks(padded[:], separator)
 
-	// Mask off bits beyond valid data
 	if validBits < simdChunkSize {
 		mask := (uint64(1) << validBits) - 1
 		quote &= mask
@@ -283,11 +256,10 @@ func generateMasksPadded(data []byte, separator byte) (quote, sep, cr, nl uint64
 		cr &= mask
 		nl &= mask
 	}
-
 	return
 }
 
-// generateMasksPaddedWithCmp is the AVX-512 version of generateMasksPadded that reuses comparators.
+// generateMasksPaddedWithCmp is the AVX-512 version of generateMasksPadded.
 func generateMasksPaddedWithCmp(data []byte, quoteCmp, sepCmp, crCmp, nlCmp archsimd.Int8x64) (quote, sep, cr, nl uint64, validBits int) {
 	validBits = len(data)
 	if validBits == 0 {
@@ -306,77 +278,139 @@ func generateMasksPaddedWithCmp(data []byte, quoteCmp, sepCmp, crCmp, nlCmp arch
 		cr &= mask
 		nl &= mask
 	}
-
 	return
 }
 
-// processQuotesAndSeparators processes quote and separator masks to handle:
-// - Quote state tracking (inside/outside quoted regions)
-// - Invalidating separators and newlines inside quotes
-// - Detecting double quotes ("") for escaping
-// - Detecting boundary double quotes (quote at position 63 with quote at position 0 of next chunk)
-//
-// Returns:
-// - quoteMaskOut: adjusted quote mask with escaped double quotes removed
-// - sepMaskOut: separator mask with separators inside quotes removed
-// - hasDoubleQuote: true if this chunk contains escaped double quotes (needs post-processing)
-// - boundaryDoubleQuote: true if there's a double quote spanning chunk boundary
+// =============================================================================
+// CRLF Normalization
+// =============================================================================
+
+// normalizeCRLF converts CRLF pairs to LF and handles isolated CRs.
+// Returns the normalized newline mask.
+func normalizeCRLF(crMask, nlMask, nextNlMask uint64, validBits int) uint64 {
+	newlineMaskOut := nlMask
+
+	// CRLF pairs: CR followed by LF
+	crlfPairs := crMask & (nlMask >> 1)
+	// Isolated CRs should be treated as newlines
+	isolatedCRs := crMask & ^crlfPairs
+	newlineMaskOut |= isolatedCRs
+
+	// Handle boundary CRLF (CR at position 63)
+	if validBits == simdChunkSize && crMask&(1<<63) != 0 {
+		if nextNlMask&1 != 0 {
+			// Boundary CRLF: next chunk's LF will be the delimiter
+			newlineMaskOut &= ^(uint64(1) << 63)
+		} else {
+			// Isolated CR at position 63
+			newlineMaskOut |= uint64(1) << 63
+		}
+	}
+
+	return newlineMaskOut
+}
+
+// =============================================================================
+// Quote and Separator Processing
+// =============================================================================
+
+// processQuotesAndSeparators processes masks to track quote state and invalidate
+// separators inside quoted regions. Detects escaped double quotes ("") including
+// those spanning chunk boundaries.
 func processQuotesAndSeparators(quoteMask, sepMask, newlineMask, nextQuoteMask uint64, state *scanState) (quoteMaskOut, sepMaskOut uint64, hasDoubleQuote, boundaryDoubleQuote bool) {
 	quoteMaskOut = quoteMask
 	sepMaskOut = sepMask
-
-	workQuoteMask := quoteMask
-	workSepMask := sepMask
-	workNewlineMask := newlineMask
+	workQuote := quoteMask
+	workSep := sepMask
+	workNewline := newlineMask
 	quoted := state.quoted
 
 	for {
-		combined := workQuoteMask | workSepMask | workNewlineMask
+		combined := workQuote | workSep | workNewline
 		if combined == 0 {
 			break
 		}
+
 		pos := bits.TrailingZeros64(combined)
 		bit := uint64(1) << pos
 
 		switch {
-		case workQuoteMask&bit != 0:
+		case workQuote&bit != 0:
 			if quoted != 0 {
+				// Inside quotes: check for escaped double quote
 				if pos == simdChunkSize-1 && nextQuoteMask&1 != 0 {
+					// Boundary double quote
 					quoteMaskOut &= ^(uint64(1) << (simdChunkSize - 1))
 					hasDoubleQuote = true
 					boundaryDoubleQuote = true
-				} else if pos < simdChunkSize-1 && workQuoteMask&(uint64(1)<<(pos+1)) != 0 {
+				} else if pos < simdChunkSize-1 && workQuote&(uint64(1)<<(pos+1)) != 0 {
+					// Adjacent double quote
 					quoteMaskOut &= ^(uint64(3) << pos)
 					hasDoubleQuote = true
-					workQuoteMask &= ^(uint64(1) << (pos + 1))
+					workQuote &= ^(uint64(1) << (pos + 1))
 				} else {
+					// Closing quote
 					quoted = 0
 				}
 			} else {
+				// Opening quote
 				quoted = ^uint64(0)
 			}
-			workQuoteMask &= ^bit
-		case workSepMask&bit != 0:
+			workQuote &= ^bit
+
+		case workSep&bit != 0:
 			if quoted != 0 {
 				sepMaskOut &= ^bit
 			}
-			workSepMask &= ^bit
+			workSep &= ^bit
+
 		default:
-			workNewlineMask &= ^bit
+			workNewline &= ^bit
 		}
 	}
 
 	state.quoted = quoted
-	return quoteMaskOut, sepMaskOut, hasDoubleQuote, boundaryDoubleQuote
+	return
 }
 
-// chunkMasks holds the four mask types for a single chunk
-type chunkMasks struct {
-	quote uint64
-	sep   uint64
-	cr    uint64
-	nl    uint64
+// invalidateNewlinesInQuotes removes newline bits that are inside quoted regions.
+func invalidateNewlinesInQuotes(quoteMask, newlineMask uint64, state *scanState) uint64 {
+	quoted := state.quoted
+	result := newlineMask
+	workQuote := quoteMask
+	workNewline := newlineMask
+
+	for {
+		combined := workQuote | workNewline
+		if combined == 0 {
+			break
+		}
+
+		pos := bits.TrailingZeros64(combined)
+		bit := uint64(1) << pos
+
+		if workQuote&bit != 0 {
+			if quoted != 0 {
+				quoted = 0
+			} else {
+				quoted = ^uint64(0)
+			}
+			workQuote &= ^bit
+			continue
+		}
+
+		if quoted != 0 {
+			result &= ^bit
+		}
+		workNewline &= ^bit
+	}
+
+	return result
 }
+
+// =============================================================================
+// Buffer Scanning - Public API
+// =============================================================================
 
 // scanBuffer dispatches to the AVX-512 or scalar implementation.
 func scanBuffer(buf []byte, separatorChar byte) *scanResult {
@@ -389,441 +423,271 @@ func scanBuffer(buf []byte, separatorChar byte) *scanResult {
 	return scanBufferScalar(buf, separatorChar)
 }
 
-// scanBufferScalar processes the entire buffer in simdChunkSize-byte chunks using scalar masks.
-// It generates structural character masks and handles:
-// - CRLF normalization (CRLF pairs are normalized to LF only in output)
-// - Quote state tracking across chunk boundaries
-// - Boundary double quote detection (quotes spanning chunks)
-// - Recording chunks that need post-processing for double quote unescaping
-func scanBufferScalar(buf []byte, separatorChar byte) *scanResult {
+// =============================================================================
+// Buffer Scanning - Scalar Implementation
+// =============================================================================
 
-	chunkCount := (len(buf) + simdChunkSize - 1) / simdChunkSize
-
-	// Get a scanResult from the pool and reset it for reuse
-	result := scanResultPool.Get().(*scanResult)
-	result.reset()
-	result.chunkCount = chunkCount
-
-	// NOTE: Pre-broadcasting AVX-512 comparators was attempted but removed because
-	// declaring archsimd.Int8x64 variables causes Go to emit AVX zeroing instructions
-	// even before the conditional check, causing SIGILL on CPUs without AVX support.
-
-	// Pre-size all mask slices to chunkCount for index-based assignment (avoids append overhead)
-	result.quoteMasks = ensureUint64SliceCap(result.quoteMasks, chunkCount)
-	result.separatorMasks = ensureUint64SliceCap(result.separatorMasks, chunkCount)
-	result.newlineMasks = ensureUint64SliceCap(result.newlineMasks, chunkCount)
-	result.chunkHasDQ = ensureBoolSliceCap(result.chunkHasDQ, chunkCount)
-	result.chunkHasQuote = ensureBoolSliceCap(result.chunkHasQuote, chunkCount)
-
-	state := scanState{}
-
-	// Pre-compute masks for chunk 0 (current) and chunk 1 (next) to avoid double calculation
-	var curMasks, nextMasks chunkMasks
-	var curValidBits int
-
-	// Generate masks for chunk 0
-	if len(buf) >= simdChunkSize {
-		curMasks.quote, curMasks.sep, curMasks.cr, curMasks.nl = generateMasks(buf[0:simdChunkSize], separatorChar)
-		curValidBits = simdChunkSize
-	} else {
-		curMasks.quote, curMasks.sep, curMasks.cr, curMasks.nl, curValidBits = generateMasksPadded(buf, separatorChar)
-		result.lastChunkBits = curValidBits
-	}
-
-	// Generate masks for chunk 1 (lookahead) if it exists
-	// Note: chunkCount > 1 implies len(buf) > simdChunkSize, so buf[simdChunkSize:] is safe
-	if chunkCount > 1 && len(buf) > simdChunkSize {
-		if len(buf) >= 2*simdChunkSize {
-			nextMasks.quote, nextMasks.sep, nextMasks.cr, nextMasks.nl = generateMasks(buf[simdChunkSize:2*simdChunkSize], separatorChar)
-		} else {
-			var nextValidBits int
-			nextMasks.quote, nextMasks.sep, nextMasks.cr, nextMasks.nl, nextValidBits = generateMasksPadded(buf[simdChunkSize:], separatorChar)
-			// If chunk 1 is the last chunk, set lastChunkBits
-			if chunkCount == 2 {
-				result.lastChunkBits = nextValidBits
-			}
-		}
-	}
-
-	for chunkIdx := 0; chunkIdx < chunkCount; chunkIdx++ {
-		// Use pre-computed masks
-		quoteMask := curMasks.quote
-		sepMask := curMasks.sep
-		crMask := curMasks.cr
-		nlMask := curMasks.nl
-		validBits := curValidBits
-
-		// Lookahead masks are already in nextMasks
-		nextQuoteMask := nextMasks.quote
-		nextNlMask := nextMasks.nl
-
-		// Handle boundary double quote from previous chunk
-		// If previous chunk ended with a quote that's part of a double quote sequence,
-		// skip the first quote of this chunk
-		if state.skipNextQuote && quoteMask&1 != 0 {
-			quoteMask &= ^uint64(1) // Skip the first quote
-		}
-		state.skipNextQuote = false
-
-		// CRLF normalization:
-		// For CRLF pairs within this chunk, we want only the LF to appear in newlineMask
-		// CR followed by LF at positions i and i+1 should result in only bit i+1 set
-		newlineMaskOut := nlMask
-
-		// Find CRLF pairs: CR at position i, LF at position i+1
-		// crMask & (nlMask >> 1) gives us CRs that are followed by LF
-		crlfPairs := crMask & (nlMask >> 1)
-
-		// Isolated CRs (CR not followed by LF) should be treated as newlines
-		isolatedCRs := crMask & ^crlfPairs
-		newlineMaskOut |= isolatedCRs
-
-		// Handle CR at position 63 (may be part of boundary CRLF)
-		if validBits == simdChunkSize && crMask&(1<<63) != 0 {
-			if nextNlMask&1 != 0 {
-				// Boundary CRLF: CR at 63, LF at next chunk's 0
-				// Remove this CR from newline mask (next chunk's LF will be the delimiter)
-				newlineMaskOut &= ^(uint64(1) << 63)
-			} else {
-				// Isolated CR at position 63: treat as newline
-				newlineMaskOut |= uint64(1) << 63
-			}
-		}
-
-		if crMask != 0 {
-			result.hasCR = true
-		}
-
-		// Save the initial quoted state for newline invalidation
-		if quoteMask == 0 {
-			if state.quoted == 0 {
-				// Fast path: not inside quotes and no quotes in this chunk.
-				result.quoteMasks[chunkIdx] = 0
-				result.separatorMasks[chunkIdx] = sepMask
-				result.newlineMasks[chunkIdx] = newlineMaskOut
-
-				result.separatorCount += bits.OnesCount64(sepMask)
-				result.newlineCount += bits.OnesCount64(newlineMaskOut)
-			} else {
-				// Fast path: inside quotes and no quotes in this chunk.
-				result.quoteMasks[chunkIdx] = 0
-				result.separatorMasks[chunkIdx] = 0
-				result.newlineMasks[chunkIdx] = 0
-			}
-
-			// Slide masks: current = next, compute new next for chunkIdx+2
-			curMasks = nextMasks
-			curValidBits = simdChunkSize // next chunk was full unless it's the last
-
-			nextChunkIdx := chunkIdx + 2
-			if nextChunkIdx < chunkCount {
-				nextOffset := nextChunkIdx * simdChunkSize
-				remaining := len(buf) - nextOffset
-				if remaining >= simdChunkSize {
-					nextMasks.quote, nextMasks.sep, nextMasks.cr, nextMasks.nl = generateMasks(buf[nextOffset:nextOffset+simdChunkSize], separatorChar)
-				} else {
-					nextMasks.quote, nextMasks.sep, nextMasks.cr, nextMasks.nl, curValidBits = generateMasksPadded(buf[nextOffset:], separatorChar)
-					result.lastChunkBits = curValidBits
-				}
-			} else {
-				nextMasks = chunkMasks{}
-				if chunkIdx+1 == chunkCount-1 && len(buf)%simdChunkSize != 0 {
-					curValidBits = len(buf) % simdChunkSize
-					result.lastChunkBits = curValidBits
-				}
-			}
-			continue
-		}
-
-		initialQuoted := state.quoted
-
-		// Process quotes and separators, invalidating those inside quoted regions
-		quoteMaskOut, sepMaskOut, hasDoubleQuote, boundaryDoubleQuote := processQuotesAndSeparators(
-			quoteMask, sepMask, newlineMaskOut, nextQuoteMask, &state,
-		)
-
-		// If there's a boundary double quote, the next chunk should skip its first quote
-		if boundaryDoubleQuote {
-			state.skipNextQuote = true
-		}
-
-		// Save end state and restore initial state for newline processing
-		endQuoted := state.quoted
-		state.quoted = initialQuoted
-
-		// Invalidate newlines inside quoted regions using the processed quote mask
-		// (with double quotes removed) and the initial state
-		newlineMaskOut = invalidateNewlinesInQuotes(quoteMaskOut, newlineMaskOut, &state)
-
-		// Restore end state for the next chunk
-		state.quoted = endQuoted
-
-		// Store results using index assignment (pre-sized slices)
-		result.quoteMasks[chunkIdx] = quoteMaskOut
-		result.separatorMasks[chunkIdx] = sepMaskOut
-		result.newlineMasks[chunkIdx] = newlineMaskOut
-
-		// Track if any quotes exist in the input (for fast path optimization)
-		if quoteMaskOut != 0 {
-			result.hasQuotes = true
-			result.chunkHasQuote[chunkIdx] = true
-		}
-
-		// Record chunks that have double quotes (using bool array instead of []int)
-		if hasDoubleQuote {
-			result.chunkHasDQ[chunkIdx] = true
-		}
-
-		// Accumulate counts for preallocation sizing
-		result.separatorCount += bits.OnesCount64(sepMaskOut)
-		result.newlineCount += bits.OnesCount64(newlineMaskOut)
-
-		// Slide masks: current = next, compute new next for chunkIdx+2
-		curMasks = nextMasks
-		curValidBits = simdChunkSize // next chunk was full unless it's the last
-
-		nextChunkIdx := chunkIdx + 2
-		if nextChunkIdx < chunkCount {
-			nextOffset := nextChunkIdx * simdChunkSize
-			remaining := len(buf) - nextOffset
-			if remaining >= simdChunkSize {
-				nextMasks.quote, nextMasks.sep, nextMasks.cr, nextMasks.nl = generateMasks(buf[nextOffset:nextOffset+simdChunkSize], separatorChar)
-			} else {
-				nextMasks.quote, nextMasks.sep, nextMasks.cr, nextMasks.nl, curValidBits = generateMasksPadded(buf[nextOffset:], separatorChar)
-				result.lastChunkBits = curValidBits
-				// curValidBits is for the NEXT iteration's current chunk
-			}
-		} else {
-			// No more chunks after next iteration
-			nextMasks = chunkMasks{}
-			// Check if next iteration is the last chunk and needs partial bits
-			if chunkIdx+1 == chunkCount-1 && len(buf)%simdChunkSize != 0 {
-				curValidBits = len(buf) % simdChunkSize
-				result.lastChunkBits = curValidBits
-			}
-		}
-	}
-
-	result.finalQuoted = state.quoted
-
-	return result
+// scalarMaskGenerator generates masks for a chunk using scalar operations.
+type scalarMaskGenerator struct {
+	separator byte
 }
 
+func (g *scalarMaskGenerator) generateFull(data []byte) chunkMasks {
+	quote, sep, cr, nl := generateMasksScalar(data, g.separator)
+	return chunkMasks{quote: quote, sep: sep, cr: cr, nl: nl}
+}
+
+func (g *scalarMaskGenerator) generatePadded(data []byte) (chunkMasks, int) {
+	quote, sep, cr, nl, validBits := generateMasksPadded(data, g.separator)
+	return chunkMasks{quote: quote, sep: sep, cr: cr, nl: nl}, validBits
+}
+
+// scanBufferScalar processes the buffer using scalar mask generation.
+func scanBufferScalar(buf []byte, separatorChar byte) *scanResult {
+	gen := &scalarMaskGenerator{separator: separatorChar}
+	return scanBufferWithGenerator(buf, gen)
+}
+
+// =============================================================================
+// Buffer Scanning - AVX-512 Implementation
+// =============================================================================
+
+// avx512MaskGenerator generates masks for a chunk using AVX-512 SIMD.
+type avx512MaskGenerator struct {
+	quoteCmp archsimd.Int8x64
+	sepCmp   archsimd.Int8x64
+	crCmp    archsimd.Int8x64
+	nlCmp    archsimd.Int8x64
+}
+
+func newAVX512MaskGenerator(separator byte) *avx512MaskGenerator {
+	return &avx512MaskGenerator{
+		quoteCmp: archsimd.BroadcastInt8x64('"'),
+		sepCmp:   archsimd.BroadcastInt8x64(int8(separator)),
+		crCmp:    archsimd.BroadcastInt8x64('\r'),
+		nlCmp:    archsimd.BroadcastInt8x64('\n'),
+	}
+}
+
+func (g *avx512MaskGenerator) generateFull(data []byte) chunkMasks {
+	quote, sep, cr, nl := generateMasksAVX512WithCmp(data, g.quoteCmp, g.sepCmp, g.crCmp, g.nlCmp)
+	return chunkMasks{quote: quote, sep: sep, cr: cr, nl: nl}
+}
+
+func (g *avx512MaskGenerator) generatePadded(data []byte) (chunkMasks, int) {
+	quote, sep, cr, nl, validBits := generateMasksPaddedWithCmp(data, g.quoteCmp, g.sepCmp, g.crCmp, g.nlCmp)
+	return chunkMasks{quote: quote, sep: sep, cr: cr, nl: nl}, validBits
+}
+
+// scanBufferAVX512 processes the buffer using AVX-512 mask generation.
+//
 //go:noinline
 func scanBufferAVX512(buf []byte, separatorChar byte) *scanResult {
 	if len(buf) == 0 {
 		return &scanResult{}
 	}
+	gen := newAVX512MaskGenerator(separatorChar)
+	return scanBufferWithGenerator(buf, gen)
+}
 
+// =============================================================================
+// Buffer Scanning - Unified Implementation
+// =============================================================================
+
+// maskGenerator abstracts mask generation for both SIMD and scalar paths.
+type maskGenerator interface {
+	generateFull(data []byte) chunkMasks
+	generatePadded(data []byte) (chunkMasks, int)
+}
+
+// scanBufferWithGenerator processes the buffer using the provided mask generator.
+// This unified implementation eliminates duplication between SIMD and scalar paths.
+func scanBufferWithGenerator(buf []byte, gen maskGenerator) *scanResult {
 	chunkCount := (len(buf) + simdChunkSize - 1) / simdChunkSize
 
+	result := acquireScanResult(chunkCount)
+	state := scanState{}
+
+	curMasks, curValidBits := generateFirstChunkMasks(buf, gen, result)
+	nextMasks := generateSecondChunkMasks(buf, chunkCount, gen, result)
+
+	for chunkIdx := 0; chunkIdx < chunkCount; chunkIdx++ {
+		processChunk(chunkIdx, curMasks, nextMasks, curValidBits, &state, result)
+
+		curMasks = nextMasks
+		curValidBits = simdChunkSize
+		nextMasks, curValidBits = generateNextLookahead(buf, chunkIdx, chunkCount, gen, result)
+	}
+
+	result.finalQuoted = state.quoted
+	return result
+}
+
+// acquireScanResult gets a pooled scanResult and initializes it for the given chunk count.
+func acquireScanResult(chunkCount int) *scanResult {
 	result := scanResultPool.Get().(*scanResult)
 	result.reset()
 	result.chunkCount = chunkCount
+	initScanResultSlices(result, chunkCount)
+	return result
+}
 
-	quoteCmp := archsimd.BroadcastInt8x64('"')
-	sepCmp := archsimd.BroadcastInt8x64(int8(separatorChar))
-	crCmp := archsimd.BroadcastInt8x64('\r')
-	nlCmp := archsimd.BroadcastInt8x64('\n')
+// generateFirstChunkMasks generates masks for the first chunk of the buffer.
+// Handles both full chunks and partial (padded) chunks.
+func generateFirstChunkMasks(buf []byte, gen maskGenerator, result *scanResult) (chunkMasks, int) {
+	if len(buf) >= simdChunkSize {
+		return gen.generateFull(buf[0:simdChunkSize]), simdChunkSize
+	}
 
-	// Pre-size all mask slices to chunkCount for index-based assignment (avoids append overhead)
+	masks, validBits := gen.generatePadded(buf)
+	result.lastChunkBits = validBits
+	return masks, validBits
+}
+
+// generateSecondChunkMasks generates lookahead masks for the second chunk if it exists.
+// Returns empty masks if there is no second chunk.
+func generateSecondChunkMasks(buf []byte, chunkCount int, gen maskGenerator, result *scanResult) chunkMasks {
+	if chunkCount <= 1 || len(buf) <= simdChunkSize {
+		return chunkMasks{}
+	}
+
+	if len(buf) >= 2*simdChunkSize {
+		return gen.generateFull(buf[simdChunkSize : 2*simdChunkSize])
+	}
+
+	masks, validBits := gen.generatePadded(buf[simdChunkSize:])
+	if chunkCount == 2 {
+		result.lastChunkBits = validBits
+	}
+	return masks
+}
+
+// generateNextLookahead generates masks for the chunk two positions ahead (lookahead).
+// This enables processing current chunk while knowing what comes next.
+func generateNextLookahead(buf []byte, chunkIdx, chunkCount int, gen maskGenerator, result *scanResult) (chunkMasks, int) {
+	lookaheadIdx := chunkIdx + 2
+	if lookaheadIdx >= chunkCount {
+		return handleFinalChunkValidBits(buf, chunkIdx, chunkCount, result)
+	}
+
+	offset := lookaheadIdx * simdChunkSize
+	remaining := len(buf) - offset
+
+	if remaining >= simdChunkSize {
+		return gen.generateFull(buf[offset : offset+simdChunkSize]), simdChunkSize
+	}
+
+	masks, validBits := gen.generatePadded(buf[offset:])
+	result.lastChunkBits = validBits
+	return masks, validBits
+}
+
+// handleFinalChunkValidBits computes valid bits when no more lookahead chunks exist.
+func handleFinalChunkValidBits(buf []byte, chunkIdx, chunkCount int, result *scanResult) (chunkMasks, int) {
+	validBits := simdChunkSize
+
+	if chunkIdx+1 == chunkCount-1 && len(buf)%simdChunkSize != 0 {
+		validBits = len(buf) % simdChunkSize
+		result.lastChunkBits = validBits
+	}
+
+	return chunkMasks{}, validBits
+}
+
+// initScanResultSlices pre-sizes all slices for index-based assignment.
+func initScanResultSlices(result *scanResult, chunkCount int) {
 	result.quoteMasks = ensureUint64SliceCap(result.quoteMasks, chunkCount)
 	result.separatorMasks = ensureUint64SliceCap(result.separatorMasks, chunkCount)
 	result.newlineMasks = ensureUint64SliceCap(result.newlineMasks, chunkCount)
 	result.chunkHasDQ = ensureBoolSliceCap(result.chunkHasDQ, chunkCount)
 	result.chunkHasQuote = ensureBoolSliceCap(result.chunkHasQuote, chunkCount)
+}
 
-	state := scanState{}
+// =============================================================================
+// Chunk Processing
+// =============================================================================
 
-	var curMasks, nextMasks chunkMasks
-	var curValidBits int
+// processChunk handles the main logic for a single chunk.
+func processChunk(chunkIdx int, curMasks, nextMasks chunkMasks, validBits int, state *scanState, result *scanResult) {
+	quoteMask := applyBoundaryQuoteSkip(curMasks.quote, state)
+	newlineMask := normalizeCRLF(curMasks.cr, curMasks.nl, nextMasks.nl, validBits)
 
-	if len(buf) >= simdChunkSize {
-		curMasks.quote, curMasks.sep, curMasks.cr, curMasks.nl = generateMasksAVX512WithCmp(buf[0:simdChunkSize], quoteCmp, sepCmp, crCmp, nlCmp)
-		curValidBits = simdChunkSize
+	if curMasks.cr != 0 {
+		result.hasCR = true
+	}
+
+	if quoteMask == 0 {
+		processChunkNoQuotes(chunkIdx, curMasks.sep, newlineMask, state, result)
+		return
+	}
+
+	processChunkWithQuotes(chunkIdx, quoteMask, curMasks.sep, newlineMask, nextMasks.quote, state, result)
+}
+
+// applyBoundaryQuoteSkip removes the first quote if it's part of a boundary double quote.
+func applyBoundaryQuoteSkip(quoteMask uint64, state *scanState) uint64 {
+	if state.skipNextQuote && quoteMask&1 != 0 {
+		quoteMask &= ^uint64(1)
+	}
+	state.skipNextQuote = false
+	return quoteMask
+}
+
+// processChunkNoQuotes handles chunks without quote characters (fast path).
+func processChunkNoQuotes(chunkIdx int, sepMask, newlineMask uint64, state *scanState, result *scanResult) {
+	if state.quoted == 0 {
+		result.quoteMasks[chunkIdx] = 0
+		result.separatorMasks[chunkIdx] = sepMask
+		result.newlineMasks[chunkIdx] = newlineMask
+		result.separatorCount += bits.OnesCount64(sepMask)
+		result.newlineCount += bits.OnesCount64(newlineMask)
 	} else {
-		curMasks.quote, curMasks.sep, curMasks.cr, curMasks.nl, curValidBits = generateMasksPaddedWithCmp(buf, quoteCmp, sepCmp, crCmp, nlCmp)
-		result.lastChunkBits = curValidBits
+		result.quoteMasks[chunkIdx] = 0
+		result.separatorMasks[chunkIdx] = 0
+		result.newlineMasks[chunkIdx] = 0
+	}
+}
+
+// processChunkWithQuotes handles chunks containing quote characters.
+func processChunkWithQuotes(chunkIdx int, quoteMask, sepMask, newlineMask, nextQuoteMask uint64, state *scanState, result *scanResult) {
+	initialQuoted := state.quoted
+
+	quoteMaskOut, sepMaskOut, hasDoubleQuote, boundaryDoubleQuote := processQuotesAndSeparators(
+		quoteMask, sepMask, newlineMask, nextQuoteMask, state,
+	)
+
+	if boundaryDoubleQuote {
+		state.skipNextQuote = true
 	}
 
-	if chunkCount > 1 && len(buf) > simdChunkSize {
-		if len(buf) >= 2*simdChunkSize {
-			nextMasks.quote, nextMasks.sep, nextMasks.cr, nextMasks.nl = generateMasksAVX512WithCmp(buf[simdChunkSize:2*simdChunkSize], quoteCmp, sepCmp, crCmp, nlCmp)
-		} else {
-			var nextValidBits int
-			nextMasks.quote, nextMasks.sep, nextMasks.cr, nextMasks.nl, nextValidBits = generateMasksPaddedWithCmp(buf[simdChunkSize:], quoteCmp, sepCmp, crCmp, nlCmp)
-			if chunkCount == 2 {
-				result.lastChunkBits = nextValidBits
-			}
-		}
-	}
+	newlineMaskOut := invalidateNewlinesWithQuoteState(quoteMaskOut, newlineMask, initialQuoted, state)
 
-	for chunkIdx := 0; chunkIdx < chunkCount; chunkIdx++ {
-		quoteMask := curMasks.quote
-		sepMask := curMasks.sep
-		crMask := curMasks.cr
-		nlMask := curMasks.nl
-		validBits := curValidBits
+	storeChunkResults(chunkIdx, quoteMaskOut, sepMaskOut, newlineMaskOut, hasDoubleQuote, result)
+}
 
-		nextQuoteMask := nextMasks.quote
-		nextNlMask := nextMasks.nl
-
-		if state.skipNextQuote && quoteMask&1 != 0 {
-			quoteMask &= ^uint64(1)
-		}
-		state.skipNextQuote = false
-
-		newlineMaskOut := nlMask
-
-		crlfPairs := crMask & (nlMask >> 1)
-		isolatedCRs := crMask & ^crlfPairs
-		newlineMaskOut |= isolatedCRs
-
-		if validBits == simdChunkSize && crMask&(1<<63) != 0 {
-			if nextNlMask&1 != 0 {
-				newlineMaskOut &= ^(uint64(1) << 63)
-			} else {
-				newlineMaskOut |= uint64(1) << 63
-			}
-		}
-
-		if crMask != 0 {
-			result.hasCR = true
-		}
-
-		if quoteMask == 0 {
-			if state.quoted == 0 {
-				// Fast path: not inside quotes and no quotes in this chunk.
-				result.quoteMasks[chunkIdx] = 0
-				result.separatorMasks[chunkIdx] = sepMask
-				result.newlineMasks[chunkIdx] = newlineMaskOut
-
-				result.separatorCount += bits.OnesCount64(sepMask)
-				result.newlineCount += bits.OnesCount64(newlineMaskOut)
-			} else {
-				// Fast path: inside quotes and no quotes in this chunk.
-				result.quoteMasks[chunkIdx] = 0
-				result.separatorMasks[chunkIdx] = 0
-				result.newlineMasks[chunkIdx] = 0
-			}
-
-			curMasks = nextMasks
-			curValidBits = simdChunkSize
-
-			nextChunkIdx := chunkIdx + 2
-			if nextChunkIdx < chunkCount {
-				nextOffset := nextChunkIdx * simdChunkSize
-				remaining := len(buf) - nextOffset
-				if remaining >= simdChunkSize {
-					nextMasks.quote, nextMasks.sep, nextMasks.cr, nextMasks.nl = generateMasksAVX512WithCmp(buf[nextOffset:nextOffset+simdChunkSize], quoteCmp, sepCmp, crCmp, nlCmp)
-				} else {
-					nextMasks.quote, nextMasks.sep, nextMasks.cr, nextMasks.nl, curValidBits = generateMasksPaddedWithCmp(buf[nextOffset:], quoteCmp, sepCmp, crCmp, nlCmp)
-					result.lastChunkBits = curValidBits
-				}
-			} else {
-				nextMasks = chunkMasks{}
-				if chunkIdx+1 == chunkCount-1 && len(buf)%simdChunkSize != 0 {
-					curValidBits = len(buf) % simdChunkSize
-					result.lastChunkBits = curValidBits
-				}
-			}
-			continue
-		}
-
-		initialQuoted := state.quoted
-
-		quoteMaskOut, sepMaskOut, hasDoubleQuote, boundaryDoubleQuote := processQuotesAndSeparators(
-			quoteMask, sepMask, newlineMaskOut, nextQuoteMask, &state,
-		)
-
-		if boundaryDoubleQuote {
-			state.skipNextQuote = true
-		}
-
-		endQuoted := state.quoted
-		state.quoted = initialQuoted
-
-		newlineMaskOut = invalidateNewlinesInQuotes(quoteMaskOut, newlineMaskOut, &state)
-
-		state.quoted = endQuoted
-
-		result.quoteMasks[chunkIdx] = quoteMaskOut
-		result.separatorMasks[chunkIdx] = sepMaskOut
-		result.newlineMasks[chunkIdx] = newlineMaskOut
-
-		if quoteMaskOut != 0 {
-			result.hasQuotes = true
-			result.chunkHasQuote[chunkIdx] = true
-		}
-
-		if hasDoubleQuote {
-			result.chunkHasDQ[chunkIdx] = true
-		}
-
-		if sepMaskOut != 0 {
-			result.separatorCount += bits.OnesCount64(sepMaskOut)
-		}
-		if newlineMaskOut != 0 {
-			result.newlineCount += bits.OnesCount64(newlineMaskOut)
-		}
-
-		curMasks = nextMasks
-		curValidBits = simdChunkSize
-
-		nextChunkIdx := chunkIdx + 2
-		if nextChunkIdx < chunkCount {
-			nextOffset := nextChunkIdx * simdChunkSize
-			remaining := len(buf) - nextOffset
-			if remaining >= simdChunkSize {
-				nextMasks.quote, nextMasks.sep, nextMasks.cr, nextMasks.nl = generateMasksAVX512WithCmp(buf[nextOffset:nextOffset+simdChunkSize], quoteCmp, sepCmp, crCmp, nlCmp)
-			} else {
-				nextMasks.quote, nextMasks.sep, nextMasks.cr, nextMasks.nl, curValidBits = generateMasksPaddedWithCmp(buf[nextOffset:], quoteCmp, sepCmp, crCmp, nlCmp)
-				result.lastChunkBits = curValidBits
-			}
-		} else {
-			nextMasks = chunkMasks{}
-			if chunkIdx+1 == chunkCount-1 && len(buf)%simdChunkSize != 0 {
-				curValidBits = len(buf) % simdChunkSize
-				result.lastChunkBits = curValidBits
-			}
-		}
-	}
-
-	result.finalQuoted = state.quoted
-
+// invalidateNewlinesWithQuoteState removes newlines inside quotes using the initial quote state.
+func invalidateNewlinesWithQuoteState(quoteMask, newlineMask, initialQuoted uint64, state *scanState) uint64 {
+	endQuoted := state.quoted
+	state.quoted = initialQuoted
+	result := invalidateNewlinesInQuotes(quoteMask, newlineMask, state)
+	state.quoted = endQuoted
 	return result
 }
 
-// invalidateNewlinesInQuotes removes newline bits that are inside quoted regions.
-func invalidateNewlinesInQuotes(quoteMask, newlineMask uint64, state *scanState) uint64 {
-	quoted := state.quoted
-	result := newlineMask
-	workQuoteMask := quoteMask
-	workNewlineMask := newlineMask
+// storeChunkResults writes the processed masks to the result.
+func storeChunkResults(chunkIdx int, quoteMask, sepMask, newlineMask uint64, hasDoubleQuote bool, result *scanResult) {
+	result.quoteMasks[chunkIdx] = quoteMask
+	result.separatorMasks[chunkIdx] = sepMask
+	result.newlineMasks[chunkIdx] = newlineMask
 
-	for {
-		combined := workQuoteMask | workNewlineMask
-		if combined == 0 {
-			break
-		}
-		pos := bits.TrailingZeros64(combined)
-		bit := uint64(1) << pos
-
-		if workQuoteMask&bit != 0 {
-			if quoted != 0 {
-				quoted = 0
-			} else {
-				quoted = ^uint64(0)
-			}
-			workQuoteMask &= ^bit
-			continue
-		}
-
-		if quoted != 0 {
-			result &= ^bit
-		}
-		workNewlineMask &= ^bit
+	if quoteMask != 0 {
+		result.hasQuotes = true
+		result.chunkHasQuote[chunkIdx] = true
+	}
+	if hasDoubleQuote {
+		result.chunkHasDQ[chunkIdx] = true
 	}
 
-	return result
+	result.separatorCount += bits.OnesCount64(sepMask)
+	result.newlineCount += bits.OnesCount64(newlineMask)
 }

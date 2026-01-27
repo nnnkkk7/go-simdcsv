@@ -8,31 +8,86 @@ import (
 	"sync"
 )
 
-// parserState holds state carried between chunks during field parsing
+// =============================================================================
+// Parser State Machine
+// =============================================================================
+//
+// The field parser uses a simple two-state machine for tracking quoted regions:
+//
+//   UNQUOTED  ---(quote)-->  QUOTED
+//   QUOTED    ---(quote)-->  UNQUOTED
+//
+// When in QUOTED state:
+//   - Separators and newlines are ignored (they are part of field content)
+//   - The next quote toggles back to UNQUOTED state
+//
+// When in UNQUOTED state:
+//   - Separators and newlines are field/row delimiters
+//   - Quotes toggle to QUOTED state
+//
+// The parser tracks additional metadata for field boundary calculation:
+//   - fieldStart: where the current field begins in the buffer
+//   - quoteAdjust: offset to skip opening quote (0 or 1)
+//   - lastClosingQuote: position of closing quote for length calculation
+//
+// =============================================================================
+
+// parserState holds state carried between chunks during field parsing.
 type parserState struct {
-	quoted                   bool   // Inside quote state
-	fieldStart               uint64 // Current field start offset
-	quoteAdjust              uint64 // Length adjustment for quotes
-	lastSeparatorOrDelimiter int64  // Last separator position (-1 for initial)
-	lastClosingQuote         int64  // Last closing quote position (-1 for invalid)
+	quoted           bool   // true when inside a quoted field
+	fieldStart       uint64 // current field start offset in buffer
+	quoteAdjust      uint64 // bytes to skip for opening quote (0 or 1)
+	lastSepOrNewline int64  // last separator/newline position (-1 initially)
+	lastClosingQuote int64  // last closing quote position (-1 if none)
 }
 
-// parseResult represents the result of field parsing (extracted fields and rows)
+// newParserState creates an initialized parser state.
+func newParserState() parserState {
+	return parserState{
+		lastSepOrNewline: -1,
+		lastClosingQuote: -1,
+	}
+}
+
+// enterQuotedState transitions to the quoted state.
+func (s *parserState) enterQuotedState() {
+	s.quoted = true
+	s.quoteAdjust = 1
+}
+
+// exitQuotedState transitions to the unquoted state, recording the closing quote position.
+func (s *parserState) exitQuotedState(quotePos uint64) {
+	s.quoted = false
+	s.lastClosingQuote = int64(quotePos)
+}
+
+// resetForNextField prepares state for parsing the next field.
+func (s *parserState) resetForNextField(delimiterPos uint64) {
+	s.fieldStart = delimiterPos + 1
+	s.quoteAdjust = 0
+	s.lastSepOrNewline = int64(delimiterPos)
+	s.lastClosingQuote = -1
+}
+
+// =============================================================================
+// Parse Result
+// =============================================================================
+
+// parseResult holds extracted fields and rows from parsing.
 type parseResult struct {
-	fields []fieldInfo // All field information
-	rows   []rowInfo   // All row information
+	fields []fieldInfo
+	rows   []rowInfo
 }
 
-// parseResultPoolFieldCap is the initial field capacity for pooled parseResult.
-// 1024 fields covers ~200 rows with 5 fields each.
-// fieldInfo is 12 bytes, so 1024 * 12 = ~12KB initial allocation.
-const parseResultPoolFieldCap = 1024
+// Pool capacity constants for parseResult.
+// Field: 1024 fields * 12 bytes = ~12KB (covers ~200 rows with 5 fields).
+// Row: 256 rows * 24 bytes = ~6KB.
+const (
+	parseResultPoolFieldCap = 1024
+	parseResultPoolRowCap   = 256
+)
 
-// parseResultPoolRowCap is the initial row capacity for pooled parseResult.
-// 256 rows with rowInfo at 24 bytes = ~6KB initial allocation.
-const parseResultPoolRowCap = 256
-
-// parseResultPool provides reusable parseResult objects to reduce allocations
+// parseResultPool provides reusable parseResult objects to reduce allocations.
 var parseResultPool = sync.Pool{
 	New: func() interface{} {
 		return &parseResult{
@@ -42,13 +97,13 @@ var parseResultPool = sync.Pool{
 	},
 }
 
-// reset clears the parseResult for reuse while preserving slice capacity
+// reset clears the parseResult for reuse while preserving slice capacity.
 func (pr *parseResult) reset() {
 	pr.fields = pr.fields[:0]
 	pr.rows = pr.rows[:0]
 }
 
-// releaseParseResult returns a parseResult to the pool for reuse
+// releaseParseResult returns a parseResult to the pool for reuse.
 func releaseParseResult(pr *parseResult) {
 	if pr != nil {
 		pr.reset()
@@ -56,13 +111,16 @@ func releaseParseResult(pr *parseResult) {
 	}
 }
 
-// fieldInfo holds field position information
+// =============================================================================
+// Field and Row Info
+// =============================================================================
+
+// fieldInfo holds field position and metadata.
 type fieldInfo struct {
-	start       uint32 // Start offset in buffer (content start, after opening quote if quoted)
-	length      uint32 // Field length (content length, excluding quotes)
-	rawEndDelta uint8  // Delta from start+length to rawEnd (typically 0-2)
-	flags       uint8  // bit0: needsUnescape, bit1: isQuoted (for rawStart calculation)
-	// 2 bytes padding
+	start       uint32 // content start offset (after opening quote if quoted)
+	length      uint32 // content length (excluding quotes)
+	rawEndDelta uint8  // delta from start+length to raw end position
+	flags       uint8  // bit0: needsUnescape, bit1: isQuoted
 }
 
 const (
@@ -70,7 +128,7 @@ const (
 	fieldFlagIsQuoted      = 1 << 1
 )
 
-// rawStart returns the raw start position (including opening quote if quoted)
+// rawStart returns the raw start position (including opening quote if quoted).
 func (f *fieldInfo) rawStart() uint32 {
 	if f.flags&fieldFlagIsQuoted != 0 {
 		return f.start - 1
@@ -78,12 +136,26 @@ func (f *fieldInfo) rawStart() uint32 {
 	return f.start
 }
 
-// rawEnd returns the raw end position (at separator/newline)
+// rawEnd returns the raw end position (at separator/newline).
 func (f *fieldInfo) rawEnd() uint32 {
 	return f.start + f.length + uint32(f.rawEndDelta)
 }
 
-// setNeedsUnescape sets the needsUnescape flag
+// newFieldInfo creates a fieldInfo from parsed boundaries.
+func newFieldInfo(start, length uint64, rawEndDelta uint8, isQuoted bool) fieldInfo {
+	var flags uint8
+	if isQuoted {
+		flags = fieldFlagIsQuoted
+	}
+	return fieldInfo{
+		start:       uint32(start),
+		length:      uint32(length),
+		rawEndDelta: rawEndDelta,
+		flags:       flags,
+	}
+}
+
+// setNeedsUnescape sets the needsUnescape flag.
 func (f *fieldInfo) setNeedsUnescape(v bool) {
 	if v {
 		f.flags |= fieldFlagNeedsUnescape
@@ -92,214 +164,265 @@ func (f *fieldInfo) setNeedsUnescape(v bool) {
 	}
 }
 
-// needsUnescape returns whether the field needs double quote unescaping
+// needsUnescape returns whether the field needs double quote unescaping.
 func (f *fieldInfo) needsUnescape() bool {
 	return f.flags&fieldFlagNeedsUnescape != 0
 }
 
-// rowInfo holds row metadata
+// rowInfo holds row metadata.
 type rowInfo struct {
-	firstField int // First field index in fields array
-	fieldCount int // Number of fields in this row
-	lineNum    int // Original input line number (for error reporting)
+	firstField int // index of first field in parseResult.fields
+	fieldCount int // number of fields in this row
+	lineNum    int // original input line number (for error reporting)
 }
 
-// parseBuffer extracts fields and rows from scan result
-// This is the main extraction function that processes masks generated by scanBuffer
-func parseBuffer(buf []byte, sr *scanResult) *parseResult {
-	// Get parseResult from pool and reset it
-	result := parseResultPool.Get().(*parseResult)
-	result.reset()
+// =============================================================================
+// Capacity Estimation
+// =============================================================================
 
-	// Handle empty input
-	if len(buf) == 0 || sr.chunkCount == 0 {
-		return result
+// estimateCounts calculates estimated field and row counts from buffer and scan data.
+func estimateCounts(bufLen int, sr *scanResult) (estimatedFields, estimatedRows int) {
+	estimatedFields = bufLen / avgFieldLenEstimate
+	estimatedRows = bufLen / avgRowLenEstimate
+
+	if sr == nil || bufLen == 0 {
+		return estimatedFields, estimatedRows
 	}
 
-	// Check if pool capacity is sufficient, otherwise reallocate
-	estimatedFields := len(buf) / avgFieldLenEstimate
-	estimatedRows := len(buf) / avgRowLenEstimate
-	if sr != nil {
-		// Use delimiter counts from scan to size more accurately.
-		if len(buf) > 0 {
-			countFields := sr.separatorCount + sr.newlineCount + 1
-			if countFields > estimatedFields {
-				estimatedFields = countFields
-			}
-			countRows := sr.newlineCount + 1
-			if countRows > estimatedRows {
-				estimatedRows = countRows
-			}
-		}
+	// Prefer scan counts when available (more accurate)
+	countFields := sr.separatorCount + sr.newlineCount + 1
+	if countFields > estimatedFields {
+		estimatedFields = countFields
 	}
+	countRows := sr.newlineCount + 1
+	if countRows > estimatedRows {
+		estimatedRows = countRows
+	}
+
+	return estimatedFields, estimatedRows
+}
+
+// ensureResultCapacity ensures result slices have sufficient capacity.
+func ensureResultCapacity(result *parseResult, bufLen int, sr *scanResult) {
+	estimatedFields, estimatedRows := estimateCounts(bufLen, sr)
+
 	if cap(result.fields) < estimatedFields {
 		result.fields = make([]fieldInfo, 0, estimatedFields)
 	}
 	if cap(result.rows) < estimatedRows {
 		result.rows = make([]rowInfo, 0, estimatedRows)
 	}
+}
 
-	// Initialize state with lastSeparatorOrDelimiter = -1
-	state := parserState{
-		lastSeparatorOrDelimiter: -1,
-		lastClosingQuote:         -1,
+// =============================================================================
+// Buffer Parsing - Main Entry Point
+// =============================================================================
+
+// parseBuffer extracts fields and rows from scan result.
+func parseBuffer(buf []byte, sr *scanResult) *parseResult {
+	result := parseResultPool.Get().(*parseResult)
+	result.reset()
+
+	if len(buf) == 0 || sr.chunkCount == 0 {
+		return result
 	}
+
+	ensureResultCapacity(result, len(buf), sr)
+
+	state := newParserState()
 	currentRowFirstField := 0
 	lineNum := 1
 
-	// Loop through all chunks, calling processChunkMasks for each
-	for chunkIdx := 0; chunkIdx < sr.chunkCount; chunkIdx++ {
-		offset := uint64(chunkIdx * simdChunkSize)
-		sepMask := sr.separatorMasks[chunkIdx]
-		nlMask := sr.newlineMasks[chunkIdx]
+	processAllChunks(buf, sr, &state, result, &currentRowFirstField, &lineNum)
 
-		// Get quote mask, default to 0 if not present
-		var quoteMask uint64
-		if chunkIdx < len(sr.quoteMasks) {
-			quoteMask = sr.quoteMasks[chunkIdx]
-		}
-
-		// Process this chunk's masks
-		processChunkMasks(buf, offset, sepMask, nlMask, quoteMask,
-			&state, result, &currentRowFirstField, &lineNum)
-	}
-
-	// Handle file without trailing newline
-	// Need to finalize if:
-	// 1. fieldStart < len(buf) - there's content for a final field
-	// 2. fieldStart == len(buf) AND last char is not newline - empty final field after separator
-	bufLen := uint64(len(buf))
-	lastCharIsNewline := bufLen > 0 && (buf[bufLen-1] == '\n' || buf[bufLen-1] == '\r')
-	needsFinalize := state.fieldStart < bufLen ||
-		(state.fieldStart == bufLen && !lastCharIsNewline)
-	if needsFinalize {
+	if needsFinalization(buf, &state) {
 		finalizeLastField(buf, &state, result, currentRowFirstField, lineNum)
 	}
 
-	// Mark fields needing double quote unescaping based on chunkHasDQ
 	if sr.chunkHasDQ != nil {
-		postProcessFields(result, sr.chunkHasDQ)
+		markFieldsNeedingUnescape(result, sr.chunkHasDQ)
 	}
 
 	return result
 }
 
-// processChunkMasks processes one chunk's masks
-// Uses bits.TrailingZeros64 to find bit positions and processes
-// separator, newline, and quote events in order
+// processAllChunks iterates through all chunks and processes their masks.
+func processAllChunks(buf []byte, sr *scanResult, state *parserState, result *parseResult, rowFirstField, lineNum *int) {
+	for chunkIdx := 0; chunkIdx < sr.chunkCount; chunkIdx++ {
+		offset := uint64(chunkIdx * simdChunkSize)
+		sepMask := sr.separatorMasks[chunkIdx]
+		nlMask := sr.newlineMasks[chunkIdx]
+		quoteMask := getQuoteMask(sr, chunkIdx)
+
+		processChunkMasks(buf, offset, sepMask, nlMask, quoteMask, state, result, rowFirstField, lineNum)
+	}
+}
+
+// getQuoteMask safely retrieves the quote mask for a chunk index.
+func getQuoteMask(sr *scanResult, chunkIdx int) uint64 {
+	if chunkIdx < len(sr.quoteMasks) {
+		return sr.quoteMasks[chunkIdx]
+	}
+	return 0
+}
+
+// =============================================================================
+// Chunk Processing
+// =============================================================================
+
+// processChunkMasks processes structural character masks for a single chunk.
+// It iterates through all quotes, separators, and newlines in position order.
 func processChunkMasks(
 	buf []byte, offset uint64,
 	sepMask, nlMask, quoteMask uint64,
 	state *parserState, result *parseResult,
-	currentRowFirstField, lineNum *int,
+	rowFirstField, lineNum *int,
 ) {
 	for {
 		combined := sepMask | nlMask | quoteMask
 		if combined == 0 {
-			break
+			return
 		}
+
 		pos := bits.TrailingZeros64(combined)
 		bit := uint64(1) << pos
+		absPos := offset + uint64(pos)
+		eventType := classifyEvent(bit, quoteMask, sepMask)
 
-		switch {
-		case quoteMask&bit != 0:
-			processQuoteEvent(offset+uint64(pos), state)
+		switch eventType {
+		case eventQuote:
+			handleQuoteEvent(absPos, state)
 			quoteMask &^= bit
 
-		case sepMask&bit != 0:
-			if !state.quoted {
-				recordField(buf, offset+uint64(pos), state, result, false)
-			}
+		case eventSeparator:
+			handleSeparatorEvent(buf, absPos, state, result)
 			sepMask &^= bit
 
-		default:
-			if !state.quoted {
-				absPos := offset + uint64(pos)
-				isBlankLine := *currentRowFirstField == len(result.fields) && state.fieldStart == absPos
-				if isBlankLine {
-					state.fieldStart = absPos + 1
-					state.quoteAdjust = 0
-					state.lastClosingQuote = -1
-					(*lineNum)++
-				} else {
-					recordField(buf, absPos, state, result, true)
-					recordRow(result, currentRowFirstField, lineNum)
-				}
-			}
+		case eventNewline:
+			handleNewlineEvent(buf, absPos, state, result, rowFirstField, lineNum)
 			nlMask &^= bit
 		}
 	}
 }
 
-// processQuoteEvent handles a quote character.
-func processQuoteEvent(absPos uint64, state *parserState) {
-	if !state.quoted {
-		// Opening quote: mark that we're inside a quoted field
-		// quoteAdjust = 1 means skip 1 byte (the opening quote) when extracting field content
-		state.quoted = true
-		state.quoteAdjust = 1
+// eventType represents the type of structural character event.
+type eventType int
+
+const (
+	eventQuote eventType = iota
+	eventSeparator
+	eventNewline
+)
+
+// classifyEvent determines the type of event at the current position.
+func classifyEvent(bit, quoteMask, sepMask uint64) eventType {
+	if quoteMask&bit != 0 {
+		return eventQuote
+	}
+	if sepMask&bit != 0 {
+		return eventSeparator
+	}
+	return eventNewline
+}
+
+// =============================================================================
+// Event Handlers
+// =============================================================================
+
+// handleQuoteEvent processes a quote character, toggling the quoted state.
+func handleQuoteEvent(absPos uint64, state *parserState) {
+	if state.quoted {
+		state.exitQuotedState(absPos)
 	} else {
-		// Closing quote: mark end of quoted field
-		// Don't increment quoteAdjust - it should remain 1 to only skip the opening quote
-		state.quoted = false
-		state.lastClosingQuote = int64(absPos)
+		state.enterQuotedState()
 	}
 }
 
-// recordField calculates field bounds and appends to result.
-// If isNewline is true, it checks for and excludes a trailing CR (for CRLF handling).
-func recordField(buf []byte, absPos uint64, state *parserState, result *parseResult, isNewline bool) {
-	start := state.fieldStart + state.quoteAdjust
-	endPos := absPos
-
-	// For newline delimiters, check if the previous byte is CR (CRLF sequence)
-	// and exclude it from the field content
-	if isNewline && endPos > start && endPos > 0 && buf[endPos-1] == '\r' {
-		endPos--
+// handleSeparatorEvent processes a separator, recording a field if not quoted.
+func handleSeparatorEvent(buf []byte, absPos uint64, state *parserState, result *parseResult) {
+	if state.quoted {
+		return // Separator inside quoted field - ignore
 	}
+	recordField(buf, absPos, state, result, false)
+}
 
-	fieldLen := calculateFieldLength(endPos, start, state)
-
-	// Calculate rawEndDelta: absPos - (start + fieldLen)
-	rawEndDelta := uint8(0)
-	if absPos > start+fieldLen {
-		rawEndDelta = uint8(absPos - start - fieldLen)
+// handleNewlineEvent processes a newline, recording a field and row if not quoted.
+func handleNewlineEvent(buf []byte, absPos uint64, state *parserState, result *parseResult, rowFirstField, lineNum *int) {
+	if state.quoted {
+		return // Newline inside quoted field - ignore
 	}
+	processNewline(buf, absPos, state, result, rowFirstField, lineNum)
+}
 
-	// Set flags
-	var flags uint8
-	if state.quoteAdjust > 0 {
-		flags |= fieldFlagIsQuoted
+// processNewline handles a newline character, either creating a row or skipping blank lines.
+func processNewline(buf []byte, absPos uint64, state *parserState, result *parseResult, rowFirstField, lineNum *int) {
+	if isBlankLine(*rowFirstField, len(result.fields), state.fieldStart, absPos) {
+		skipBlankLine(state, absPos, lineNum)
+		return
 	}
+	recordField(buf, absPos, state, result, true)
+	recordRow(result, rowFirstField, lineNum)
+}
 
-	result.fields = append(result.fields, fieldInfo{
-		start:       uint32(start),
-		length:      uint32(fieldLen),
-		rawEndDelta: rawEndDelta,
-		flags:       flags,
-	})
+// isBlankLine checks if the current line contains no fields.
+func isBlankLine(rowFirstField, totalFields int, fieldStart, newlinePos uint64) bool {
+	return rowFirstField == totalFields && fieldStart == newlinePos
+}
 
+// skipBlankLine advances past a blank line without recording it.
+func skipBlankLine(state *parserState, absPos uint64, lineNum *int) {
 	state.fieldStart = absPos + 1
 	state.quoteAdjust = 0
-	state.lastSeparatorOrDelimiter = int64(absPos)
 	state.lastClosingQuote = -1
-}
-
-// recordRow appends row info and updates row tracking state
-func recordRow(result *parseResult, currentRowFirstField, lineNum *int) {
-	fieldCount := len(result.fields) - *currentRowFirstField
-	result.rows = append(result.rows, rowInfo{
-		firstField: *currentRowFirstField,
-		fieldCount: fieldCount,
-		lineNum:    *lineNum,
-	})
-	*currentRowFirstField = len(result.fields)
 	(*lineNum)++
 }
 
-// calculateFieldLength computes field length, accounting for quoted fields.
-// Returns 0 if calculation would result in underflow (invalid state).
-func calculateFieldLength(endPos, start uint64, state *parserState) uint64 {
+// =============================================================================
+// Field Recording
+// =============================================================================
+
+// recordField calculates field bounds and appends to result.
+// For newline delimiters (isNewline=true), excludes trailing CR from CRLF sequences.
+func recordField(buf []byte, absPos uint64, state *parserState, result *parseResult, isNewline bool) {
+	bounds := computeFieldBounds(buf, absPos, state, isNewline)
+	result.fields = append(result.fields, newFieldInfo(bounds.start, bounds.length, bounds.rawEndDelta, bounds.isQuoted))
+	state.resetForNextField(absPos)
+}
+
+// fieldBounds holds computed field boundary information.
+type fieldBounds struct {
+	start       uint64
+	length      uint64
+	rawEndDelta uint8
+	isQuoted    bool
+}
+
+// computeFieldBounds calculates the start, length, and metadata for a field.
+func computeFieldBounds(buf []byte, absPos uint64, state *parserState, isNewline bool) fieldBounds {
+	start := state.fieldStart + state.quoteAdjust
+	endPos := adjustEndForCRLF(buf, absPos, start, isNewline)
+	fieldLen := computeFieldLength(endPos, start, state)
+	rawEndDelta := computeRawEndDelta(absPos, start, fieldLen)
+
+	return fieldBounds{
+		start:       start,
+		length:      fieldLen,
+		rawEndDelta: rawEndDelta,
+		isQuoted:    state.quoteAdjust > 0,
+	}
+}
+
+// adjustEndForCRLF excludes trailing CR from CRLF sequences for newline delimiters.
+func adjustEndForCRLF(buf []byte, absPos, start uint64, isNewline bool) uint64 {
+	if isNewline && absPos > start && absPos > 0 && buf[absPos-1] == '\r' {
+		return absPos - 1
+	}
+	return absPos
+}
+
+// computeFieldLength calculates field content length.
+// For quoted fields, uses the closing quote position; otherwise uses endPos.
+func computeFieldLength(endPos, start uint64, state *parserState) uint64 {
 	if state.lastClosingQuote >= 0 && state.quoteAdjust > 0 {
 		closeQuote := uint64(state.lastClosingQuote)
 		if closeQuote > start {
@@ -313,65 +436,102 @@ func calculateFieldLength(endPos, start uint64, state *parserState) uint64 {
 	return 0
 }
 
-// finalizeLastField handles the last field when file doesn't end with newline
-func finalizeLastField(buf []byte, state *parserState, result *parseResult, currentRowFirstField, lineNum int) {
+// computeRawEndDelta calculates the delta between raw end and content end.
+func computeRawEndDelta(absPos, start, fieldLen uint64) uint8 {
+	if absPos > start+fieldLen {
+		return uint8(absPos - start - fieldLen)
+	}
+	return 0
+}
+
+// =============================================================================
+// Row Recording
+// =============================================================================
+
+// recordRow appends row info and advances to the next row.
+func recordRow(result *parseResult, rowFirstField, lineNum *int) {
+	result.rows = append(result.rows, rowInfo{
+		firstField: *rowFirstField,
+		fieldCount: len(result.fields) - *rowFirstField,
+		lineNum:    *lineNum,
+	})
+	*rowFirstField = len(result.fields)
+	(*lineNum)++
+}
+
+// =============================================================================
+// Finalization
+// =============================================================================
+
+// needsFinalization determines if the buffer has a trailing field without newline.
+func needsFinalization(buf []byte, state *parserState) bool {
+	bufLen := uint64(len(buf))
+	if bufLen == 0 {
+		return false
+	}
+
+	// Content remains for a final field
+	if state.fieldStart < bufLen {
+		return true
+	}
+
+	// Empty final field after separator (no trailing newline)
+	lastChar := buf[bufLen-1]
+	lastCharIsNewline := lastChar == '\n' || lastChar == '\r'
+	return state.fieldStart == bufLen && !lastCharIsNewline
+}
+
+// finalizeLastField handles the final field when input lacks a trailing newline.
+func finalizeLastField(buf []byte, state *parserState, result *parseResult, rowFirstField, lineNum int) {
 	start := state.fieldStart + state.quoteAdjust
 	bufLen := uint64(len(buf))
-	fieldLen := calculateFieldLength(bufLen, start, state)
+	fieldLen := computeFieldLength(bufLen, start, state)
+	rawEndDelta := computeRawEndDelta(bufLen, start, fieldLen)
+	isQuoted := state.quoteAdjust > 0
 
-	// Calculate rawEndDelta: bufLen - (start + fieldLen)
-	rawEndDelta := uint8(0)
-	if bufLen > start+fieldLen {
-		rawEndDelta = uint8(bufLen - start - fieldLen)
-	}
-
-	// Set flags
-	var flags uint8
-	if state.quoteAdjust > 0 {
-		flags |= fieldFlagIsQuoted
-	}
-
-	result.fields = append(result.fields, fieldInfo{
-		start:       uint32(start),
-		length:      uint32(fieldLen),
-		rawEndDelta: rawEndDelta,
-		flags:       flags,
-	})
-
-	fieldCount := len(result.fields) - currentRowFirstField
+	result.fields = append(result.fields, newFieldInfo(start, fieldLen, rawEndDelta, isQuoted))
 	result.rows = append(result.rows, rowInfo{
-		firstField: currentRowFirstField,
-		fieldCount: fieldCount,
+		firstField: rowFirstField,
+		fieldCount: len(result.fields) - rowFirstField,
 		lineNum:    lineNum,
 	})
 }
 
-// postProcessFields marks fields needing double quote unescaping.
-// Fields that overlap with chunks marked in chunkHasDQ are flagged.
-func postProcessFields(result *parseResult, chunkHasDQ []bool) {
+// =============================================================================
+// Post-Processing: Double Quote Detection
+// =============================================================================
+
+// markFieldsNeedingUnescape marks fields that need double quote unescaping.
+// A field is marked if it overlaps with any chunk containing escaped quotes.
+func markFieldsNeedingUnescape(result *parseResult, chunkHasDQ []bool) {
 	if len(chunkHasDQ) == 0 {
 		return
 	}
 
 	for i := range result.fields {
 		f := &result.fields[i]
-
-		startChunk := int(uint64(f.start) / simdChunkSize)
-		if startChunk < len(chunkHasDQ) && chunkHasDQ[startChunk] {
+		if fieldOverlapsDoubleQuoteChunk(f, chunkHasDQ) {
 			f.setNeedsUnescape(true)
-			continue
-		}
-
-		if f.length > 0 {
-			endChunk := int((uint64(f.start) + uint64(f.length) - 1) / simdChunkSize)
-			if endChunk != startChunk {
-				for c := startChunk; c <= endChunk && c < len(chunkHasDQ); c++ {
-					if chunkHasDQ[c] {
-						f.setNeedsUnescape(true)
-						break
-					}
-				}
-			}
 		}
 	}
+}
+
+// fieldOverlapsDoubleQuoteChunk checks if a field spans any chunk with escaped quotes.
+func fieldOverlapsDoubleQuoteChunk(f *fieldInfo, chunkHasDQ []bool) bool {
+	startChunk := int(uint64(f.start) / simdChunkSize)
+	if startChunk < len(chunkHasDQ) && chunkHasDQ[startChunk] {
+		return true
+	}
+
+	if f.length == 0 {
+		return false
+	}
+
+	endChunk := int((uint64(f.start) + uint64(f.length) - 1) / simdChunkSize)
+	for c := startChunk + 1; c <= endChunk && c < len(chunkHasDQ); c++ {
+		if chunkHasDQ[c] {
+			return true
+		}
+	}
+	return false
 }

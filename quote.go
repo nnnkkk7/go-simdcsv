@@ -10,14 +10,28 @@ import (
 	"simd/archsimd"
 )
 
-// skipLeadingWhitespace returns the number of leading whitespace bytes (space or tab).
-func skipLeadingWhitespace(data []byte) int {
-	i := 0
-	for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
-		i++
-	}
-	return i
+// =============================================================================
+// Whitespace Handling
+// =============================================================================
+
+// isWhitespace reports whether b is a space or tab character.
+func isWhitespace(b byte) bool {
+	return b == ' ' || b == '\t'
 }
+
+// skipLeadingWhitespace returns the number of leading whitespace bytes.
+func skipLeadingWhitespace(data []byte) int {
+	for i := 0; i < len(data); i++ {
+		if !isWhitespace(data[i]) {
+			return i
+		}
+	}
+	return len(data)
+}
+
+// =============================================================================
+// Quote Detection
+// =============================================================================
 
 // isQuotedFieldStart checks if data starts with a quote, optionally after whitespace.
 // Returns (isQuoted, quoteOffset) where quoteOffset is the position of the opening quote.
@@ -26,12 +40,10 @@ func isQuotedFieldStart(data []byte, trimLeadingSpace bool) (bool, int) {
 		return false, 0
 	}
 
-	// Direct quote at start
 	if data[0] == '"' {
 		return true, 0
 	}
 
-	// Check for whitespace followed by quote if trimming is enabled
 	if trimLeadingSpace {
 		offset := skipLeadingWhitespace(data)
 		if offset > 0 && offset < len(data) && data[offset] == '"' {
@@ -42,10 +54,18 @@ func isQuotedFieldStart(data []byte, trimLeadingSpace bool) (bool, int) {
 	return false, 0
 }
 
+// isEscapedQuote checks if the quote at position i is escaped (followed by another quote).
+func isEscapedQuote(data []byte, i int) bool {
+	return i+1 < len(data) && data[i+1] == '"'
+}
+
+// =============================================================================
+// Closing Quote Search - Unified Dispatch
+// =============================================================================
+
 // findClosingQuote finds the closing quote in a quoted field.
 // Returns the index of the closing quote, or -1 if not found.
 // Handles escaped double quotes ("").
-// Dispatches to SIMD or scalar implementation based on CPU support and data size.
 func findClosingQuote(data []byte, startAfterOpenQuote int) int {
 	remaining := len(data) - startAfterOpenQuote
 	if shouldUseSIMD(remaining) {
@@ -54,79 +74,93 @@ func findClosingQuote(data []byte, startAfterOpenQuote int) int {
 	return findClosingQuoteScalar(data, startAfterOpenQuote)
 }
 
-// findClosingQuoteScalar is the scalar implementation of findClosingQuote.
+// =============================================================================
+// Closing Quote Search - Scalar Implementation
+// =============================================================================
+
+// findClosingQuoteScalar finds the closing quote using scalar operations.
 func findClosingQuoteScalar(data []byte, startAfterOpenQuote int) int {
-	i := startAfterOpenQuote
-	for i < len(data) {
-		if data[i] == '"' {
-			// Check for escaped quote
-			if i+1 < len(data) && data[i+1] == '"' {
-				i += 2
-				continue
-			}
-			// This is the closing quote
-			return i
+	for i := startAfterOpenQuote; i < len(data); i++ {
+		if data[i] != '"' {
+			continue
 		}
-		i++
+		if isEscapedQuote(data, i) {
+			i++ // Skip second quote of escape sequence (loop increments again)
+			continue
+		}
+		return i
 	}
 	return -1
 }
 
-// findClosingQuoteSIMD uses SIMD to find the closing quote.
-// It searches for quote characters in simdHalfChunk-byte chunks using AVX-512.
+// =============================================================================
+// Closing Quote Search - SIMD Implementation
+// =============================================================================
+
+// findClosingQuoteSIMD uses AVX-512 to find the closing quote in simdHalfChunk-byte chunks.
 func findClosingQuoteSIMD(data []byte, startAfterOpenQuote int) int {
 	quoteCmp := archsimd.BroadcastInt8x32('"')
 	i := startAfterOpenQuote
 
-	// Process simdHalfChunk-byte chunks
 	for i+simdHalfChunk <= len(data) {
 		chunk := archsimd.LoadInt8x32((*[simdHalfChunk]int8)(unsafe.Pointer(&data[i])))
 		mask := chunk.Equal(quoteCmp).ToBits()
 
-		if mask != 0 {
-			// Found at least one quote in this chunk
-			for mask != 0 {
-				// Find the position of the first quote
-				pos := bits.TrailingZeros32(mask)
-				absPos := i + pos
-
-				// Check for escaped quote (double quote)
-				if absPos+1 < len(data) && data[absPos+1] == '"' {
-					// This is an escaped quote, skip both quotes
-					// Clear this bit and the next (if in same chunk)
-					mask &= ^(uint32(1) << pos)
-					if pos+1 < simdHalfChunk {
-						mask &= ^(uint32(1) << (pos + 1))
-					}
-					// If next quote is in the next chunk, we need to skip it.
-					// Using goto here for performance: it allows us to skip the normal
-					// i += simdHalfChunk increment and immediately continue with the
-					// already-adjusted i value after handling boundary double quotes.
-					if pos == simdHalfChunk-1 {
-						i += simdHalfChunk
-						// Skip the first quote of the next iteration
-						if i < len(data) && data[i] == '"' {
-							i++
-						}
-						goto continueLoop
-					}
-					continue
-				}
-				// This is the closing quote
-				return absPos
-			}
+		if mask == 0 {
+			i += simdHalfChunk
+			continue
 		}
-		i += simdHalfChunk
-	continueLoop:
+
+		result, newI, done := processQuoteMask(data, i, mask)
+		if result >= 0 {
+			return result
+		}
+		if done {
+			break
+		}
+		i = newI
 	}
 
-	// Process remaining bytes with scalar implementation
 	return findClosingQuoteScalar(data, i)
 }
 
-// extractQuotedContent extracts content from a quoted field, handling unescaping.
+// processQuoteMask processes quote positions in a SIMD chunk mask.
+// Returns (closingQuoteIdx, newPosition, shouldExitLoop).
+func processQuoteMask(data []byte, chunkStart int, mask uint32) (int, int, bool) {
+	for mask != 0 {
+		pos := bits.TrailingZeros32(mask)
+		absPos := chunkStart + pos
+
+		if !isEscapedQuote(data, absPos) {
+			return absPos, chunkStart, false
+		}
+
+		// Clear both bits of the escaped quote pair
+		mask = clearBitU32(mask, pos)
+		if pos+1 < simdHalfChunk {
+			mask = clearBitU32(mask, pos+1)
+		}
+
+		// Handle boundary case: escaped quote spans chunk boundary
+		if pos == simdHalfChunk-1 {
+			newPos := chunkStart + simdHalfChunk
+			if newPos < len(data) && data[newPos] == '"' {
+				newPos++
+			}
+			return -1, newPos, false
+		}
+	}
+
+	return -1, chunkStart + simdHalfChunk, false
+}
+
+// =============================================================================
+// Content Extraction
+// =============================================================================
+
+// extractQuotedContent extracts the raw content from a quoted field.
 // data should start from the opening quote.
-// Returns the unescaped content between quotes.
+// Returns the content between quotes without unescaping.
 func extractQuotedContent(data []byte, closingQuoteIdx int) string {
 	if closingQuoteIdx <= 1 {
 		return ""
@@ -135,11 +169,10 @@ func extractQuotedContent(data []byte, closingQuoteIdx int) string {
 }
 
 // =============================================================================
-// Double Quote Unescaping
+// Double Quote Unescaping - Unified Dispatch
 // =============================================================================
 
-// unescapeDoubleQuotes converts double quotes ("") to single quotes (").
-// Dispatches to SIMD or scalar implementation based on CPU support and string size.
+// unescapeDoubleQuotes converts escaped double quotes ("") to single quotes (").
 func unescapeDoubleQuotes(s string) string {
 	if shouldUseSIMD(len(s)) {
 		return unescapeDoubleQuotesSIMD(s)
@@ -147,83 +180,132 @@ func unescapeDoubleQuotes(s string) string {
 	return unescapeDoubleQuotesScalar(s)
 }
 
-// unescapeDoubleQuotesScalar is the scalar implementation.
+// =============================================================================
+// Double Quote Unescaping - Scalar Implementation
+// =============================================================================
+
+// unescapeDoubleQuotesScalar uses standard library for unescaping.
 func unescapeDoubleQuotesScalar(s string) string {
-	// Fast path: no double quotes
 	if !strings.Contains(s, `""`) {
 		return s
 	}
 	return strings.ReplaceAll(s, `""`, `"`)
 }
 
-// unescapeDoubleQuotesSIMD uses SIMD to find double quotes and unescape them.
+// =============================================================================
+// Double Quote Unescaping - SIMD Implementation
+// =============================================================================
+
+// unescapeState holds state for SIMD double-quote unescaping.
+type unescapeState struct {
+	source        string
+	data          []byte
+	result        []byte
+	lastWritten   int
+	pos           int
+	skipNextQuote bool
+}
+
+// unescapeDoubleQuotesSIMD uses AVX-512 to find and unescape double quotes.
 func unescapeDoubleQuotesSIMD(s string) string {
 	data := unsafe.Slice(unsafe.StringData(s), len(s))
+	state := &unescapeState{source: s, data: data}
+
+	state.processSIMDChunks()
+	state.processRemainingBytes()
+
+	return state.buildResult()
+}
+
+// processSIMDChunks processes full SIMD chunks looking for double quotes.
+func (s *unescapeState) processSIMDChunks() {
 	quoteCmp := archsimd.BroadcastInt8x64('"')
-	var result []byte
-	lastWritten := 0
-	skipNextQuote := false
-	i := 0
-	for i+simdChunkSize <= len(data) {
-		chunk := archsimd.LoadInt8x64((*[simdChunkSize]int8)(unsafe.Pointer(&data[i])))
+
+	for s.pos+simdChunkSize <= len(s.data) {
+		chunk := archsimd.LoadInt8x64((*[simdChunkSize]int8)(unsafe.Pointer(&s.data[s.pos])))
 		mask := chunk.Equal(quoteCmp).ToBits()
 
-		if skipNextQuote {
-			if mask&1 != 0 {
-				mask &^= 1
-			}
-			skipNextQuote = false
-		}
-
-		if mask != 0 {
-			for mask != 0 {
-				pos := bits.TrailingZeros64(mask)
-				absPos := i + pos
-
-				if absPos+1 < len(data) && data[absPos+1] == '"' {
-					// Found double quote - write up to and including first quote
-					if result == nil {
-						result = make([]byte, 0, len(s))
-					}
-					result = append(result, s[lastWritten:absPos+1]...)
-					lastWritten = absPos + 2 // Skip the second quote
-					// Clear both bits if second quote is in same chunk
-					mask &^= uint64(1) << pos
-					if pos+1 < simdChunkSize {
-						mask &^= uint64(1) << (pos + 1)
-					} else {
-						skipNextQuote = true
-					}
-					continue
-				}
-				mask &^= uint64(1) << pos
-			}
-		}
-		i += simdChunkSize
+		mask = s.applySkipFlag(mask)
+		s.processUnescapeMask(mask)
+		s.pos += simdChunkSize
 	}
+}
 
-	// Process remaining bytes
-	if skipNextQuote && i < len(data) && data[i] == '"' {
-		i++
+// applySkipFlag clears the first bit if we need to skip due to boundary crossing.
+func (s *unescapeState) applySkipFlag(mask uint64) uint64 {
+	if s.skipNextQuote && mask&1 != 0 {
+		mask &^= 1
 	}
-	for i < len(data)-1 {
-		if data[i] == '"' && data[i+1] == '"' {
-			if result == nil {
-				result = make([]byte, 0, len(s))
+	s.skipNextQuote = false
+	return mask
+}
+
+// processUnescapeMask processes all quote positions in a chunk mask for unescaping.
+func (s *unescapeState) processUnescapeMask(mask uint64) {
+	for mask != 0 {
+		pos := bits.TrailingZeros64(mask)
+		absPos := s.pos + pos
+
+		if absPos+1 < len(s.data) && s.data[absPos+1] == '"' {
+			s.recordUnescape(absPos)
+			mask = clearBitU64(mask, pos)
+			if pos+1 < simdChunkSize {
+				mask = clearBitU64(mask, pos+1)
+			} else {
+				s.skipNextQuote = true
 			}
-			result = append(result, s[lastWritten:i+1]...)
-			lastWritten = i + 2
-			i += 2
 			continue
 		}
-		i++
+		mask = clearBitU64(mask, pos)
+	}
+}
+
+// recordUnescape records a double-quote unescape at the given position.
+func (s *unescapeState) recordUnescape(absPos int) {
+	if s.result == nil {
+		s.result = make([]byte, 0, len(s.source))
+	}
+	s.result = append(s.result, s.source[s.lastWritten:absPos+1]...)
+	s.lastWritten = absPos + 2
+}
+
+// processRemainingBytes handles bytes after the last full SIMD chunk.
+func (s *unescapeState) processRemainingBytes() {
+	if s.skipNextQuote && s.pos < len(s.data) && s.data[s.pos] == '"' {
+		s.pos++
 	}
 
-	if result == nil {
-		return s
+	for s.pos < len(s.data)-1 {
+		if s.data[s.pos] == '"' && s.data[s.pos+1] == '"' {
+			s.recordUnescape(s.pos)
+			s.pos += 2
+			continue
+		}
+		s.pos++
 	}
-	if lastWritten < len(s) {
-		result = append(result, s[lastWritten:]...)
+}
+
+// buildResult returns the final unescaped string.
+func (s *unescapeState) buildResult() string {
+	if s.result == nil {
+		return s.source
 	}
-	return string(result)
+	if s.lastWritten < len(s.source) {
+		s.result = append(s.result, s.source[s.lastWritten:]...)
+	}
+	return string(s.result)
+}
+
+// =============================================================================
+// Bit Manipulation Utilities
+// =============================================================================
+
+// clearBitU32 clears the bit at position pos in a 32-bit mask.
+func clearBitU32(mask uint32, pos int) uint32 {
+	return mask &^ (uint32(1) << pos)
+}
+
+// clearBitU64 clears the bit at position pos in a 64-bit mask.
+func clearBitU64(mask uint64, pos int) uint64 {
+	return mask &^ (uint64(1) << pos)
 }

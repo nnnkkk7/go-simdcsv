@@ -1125,16 +1125,16 @@ func TestNewReaderWithOptions_OptionsApplied(t *testing.T) {
 	reader := NewReaderWithOptions(strings.NewReader("a,b,c\n"), opts)
 
 	// Verify internal fields are set (these are currently reserved for future use)
-	if reader.skipBOM != opts.SkipBOM {
-		t.Errorf("skipBOM not applied: got %v, want %v", reader.skipBOM, opts.SkipBOM)
+	if reader.opts.skipBOM != opts.SkipBOM {
+		t.Errorf("skipBOM not applied: got %v, want %v", reader.opts.skipBOM, opts.SkipBOM)
 	}
-	if reader.bufferSize != opts.BufferSize {
-		t.Errorf("bufferSize not applied: got %v, want %v", reader.bufferSize, opts.BufferSize)
+	if reader.opts.bufferSize != opts.BufferSize {
+		t.Errorf("bufferSize not applied: got %v, want %v", reader.opts.bufferSize, opts.BufferSize)
 	}
-	if reader.chunkSize != opts.ChunkSize {
-		t.Errorf("chunkSize not applied: got %v, want %v", reader.chunkSize, opts.ChunkSize)
+	if reader.opts.chunkSize != opts.ChunkSize {
+		t.Errorf("chunkSize not applied: got %v, want %v", reader.opts.chunkSize, opts.ChunkSize)
 	}
-	if reader.zeroCopy != opts.ZeroCopy {
-		t.Errorf("zeroCopy not applied: got %v, want %v", reader.zeroCopy, opts.ZeroCopy)
+	if reader.opts.zeroCopy != opts.ZeroCopy {
+		t.Errorf("zeroCopy not applied: got %v, want %v", reader.opts.zeroCopy, opts.ZeroCopy)
 	}
 }
