@@ -5,14 +5,6 @@ package simdcsv
 
 import (
 	"math/bits"
-	"strings"
-)
-
-// fieldNormalizer is a pre-compiled replacer for common field transformations.
-// Using a single Replacer for both operations is more efficient than separate calls.
-var fieldNormalizer = strings.NewReplacer(
-	`""`, `"`, // Unescape double quotes
-	"\r\n", "\n", // Normalize CRLF to LF
 )
 
 // parserState holds state carried between chunks during field parsing
@@ -31,13 +23,12 @@ type parseResult struct {
 }
 
 // fieldInfo holds field position information
-// Memory layout optimized: 24 bytes (same as original without raw bounds)
 type fieldInfo struct {
-	start       uint64 // Start offset in buffer (content start, after opening quote if quoted)
-	length      uint64 // Field length (content length, excluding quotes)
+	start       uint32 // Start offset in buffer (content start, after opening quote if quoted)
+	length      uint32 // Field length (content length, excluding quotes)
 	rawEndDelta uint8  // Delta from start+length to rawEnd (typically 0-2)
 	flags       uint8  // bit0: needsUnescape, bit1: isQuoted (for rawStart calculation)
-	// 6 bytes padding
+	// 2 bytes padding
 }
 
 const (
@@ -46,7 +37,7 @@ const (
 )
 
 // rawStart returns the raw start position (including opening quote if quoted)
-func (f *fieldInfo) rawStart() uint64 {
+func (f *fieldInfo) rawStart() uint32 {
 	if f.flags&fieldFlagIsQuoted != 0 {
 		return f.start - 1
 	}
@@ -54,8 +45,8 @@ func (f *fieldInfo) rawStart() uint64 {
 }
 
 // rawEnd returns the raw end position (at separator/newline)
-func (f *fieldInfo) rawEnd() uint64 {
-	return f.start + f.length + uint64(f.rawEndDelta)
+func (f *fieldInfo) rawEnd() uint32 {
+	return f.start + f.length + uint32(f.rawEndDelta)
 }
 
 // setNeedsUnescape sets the needsUnescape flag
@@ -249,8 +240,8 @@ func recordField(buf []byte, absPos uint64, state *parserState, result *parseRes
 	}
 
 	result.fields = append(result.fields, fieldInfo{
-		start:       start,
-		length:      fieldLen,
+		start:       uint32(start),
+		length:      uint32(fieldLen),
 		rawEndDelta: rawEndDelta,
 		flags:       flags,
 	})
@@ -308,8 +299,8 @@ func finalizeLastField(buf []byte, state *parserState, result *parseResult, curr
 	}
 
 	result.fields = append(result.fields, fieldInfo{
-		start:       start,
-		length:      fieldLen,
+		start:       uint32(start),
+		length:      uint32(fieldLen),
 		rawEndDelta: rawEndDelta,
 		flags:       flags,
 	})
@@ -324,7 +315,7 @@ func finalizeLastField(buf []byte, state *parserState, result *parseResult, curr
 
 // postProcessFields marks fields needing double quote unescaping.
 // Fields that overlap with chunks listed in postProcChunks are flagged.
-func postProcessFields(buf []byte, result *parseResult, postProcChunks []int) {
+func postProcessFields(_ []byte, result *parseResult, postProcChunks []int) {
 	if len(postProcChunks) == 0 {
 		return
 	}
@@ -337,14 +328,14 @@ func postProcessFields(buf []byte, result *parseResult, postProcChunks []int) {
 	for i := range result.fields {
 		f := &result.fields[i]
 
-		startChunk := int(f.start / simdChunkSize)
+		startChunk := int(uint64(f.start) / simdChunkSize)
 		if _, ok := chunkSet[startChunk]; ok {
 			f.setNeedsUnescape(true)
 			continue
 		}
 
 		if f.length > 0 {
-			endChunk := int((f.start + f.length - 1) / simdChunkSize)
+			endChunk := int((uint64(f.start) + uint64(f.length) - 1) / simdChunkSize)
 			if endChunk != startChunk {
 				for c := startChunk; c <= endChunk; c++ {
 					if _, ok := chunkSet[c]; ok {
@@ -355,50 +346,4 @@ func postProcessFields(buf []byte, result *parseResult, postProcChunks []int) {
 			}
 		}
 	}
-}
-
-// extractFieldSafe safely extracts a field string from buffer.
-// Returns empty string if bounds are invalid, ensuring no panic occurs.
-func extractFieldSafe(buf []byte, start, length uint64) string {
-	if length == 0 {
-		return ""
-	}
-	bufLen := uint64(len(buf))
-	if start >= bufLen {
-		return ""
-	}
-	end := start + length
-	if end > bufLen {
-		end = bufLen
-	}
-	return string(buf[start:end])
-}
-
-// extractField extracts a field string, applying unescaping and CRLF normalization if needed.
-func extractField(buf []byte, field fieldInfo) string {
-	s := extractFieldSafe(buf, field.start, field.length)
-	if len(s) == 0 {
-		return s
-	}
-
-	// Fast path: check if any transformation is needed
-	needsTransform := field.needsUnescape() || containsCRLF(s)
-	if !needsTransform {
-		return s
-	}
-
-	// Apply transformations using pre-compiled replacer
-	// This is more efficient than separate Contains + ReplaceAll calls
-	return fieldNormalizer.Replace(s)
-}
-
-// containsCRLF checks if the string contains CRLF sequences.
-// This is a fast check to avoid unnecessary replacer calls.
-func containsCRLF(s string) bool {
-	for i := 0; i < len(s)-1; i++ {
-		if s[i] == '\r' && s[i+1] == '\n' {
-			return true
-		}
-	}
-	return false
 }

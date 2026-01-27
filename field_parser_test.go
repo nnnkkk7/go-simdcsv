@@ -1266,7 +1266,7 @@ func extractFieldContent(buf []byte, f fieldInfo) string {
 	if f.length == 0 {
 		return ""
 	}
-	if f.start+f.length > uint64(len(buf)) {
+	if f.start+f.length > uint32(len(buf)) {
 		return ""
 	}
 	return string(buf[f.start : f.start+f.length])

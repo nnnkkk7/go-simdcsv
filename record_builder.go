@@ -1,5 +1,6 @@
 //go:build goexperiment.simd && amd64
 
+//nolint:gosec // G115: Integer conversions are safe - buffer size bounded by DefaultMaxInputSize (2GB)
 package simdcsv
 
 // =============================================================================
@@ -37,7 +38,7 @@ func (r *Reader) buildRecordWithValidation(row rowInfo, rowIdx int) ([]string, e
 		field := r.parseResult.fields[fieldIdx]
 
 		// Get raw field data for validation
-		rawStart, rawEnd := r.getFieldRawBounds(row, rowIdx, fieldIdx, i)
+		rawStart, rawEnd := r.getFieldRawBounds(fieldIdx)
 
 		// Validate quotes unless LazyQuotes is enabled
 		if !r.LazyQuotes {
@@ -127,10 +128,11 @@ func (r *Reader) getFieldContent(field fieldInfo) []byte {
 		return nil
 	}
 	end := field.start + field.length
-	if end > uint64(len(r.rawBuffer)) {
-		end = uint64(len(r.rawBuffer))
+	bufLen := uint32(len(r.rawBuffer))
+	if end > bufLen {
+		end = bufLen
 	}
-	if field.start >= uint64(len(r.rawBuffer)) {
+	if field.start >= bufLen {
 		return nil
 	}
 	return r.rawBuffer[field.start:end]

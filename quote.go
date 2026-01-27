@@ -4,9 +4,10 @@ package simdcsv
 
 import (
 	"math/bits"
-	"simd/archsimd"
 	"strings"
 	"unsafe"
+
+	"simd/archsimd"
 )
 
 // skipLeadingWhitespace returns the number of leading whitespace bytes (space or tab).
