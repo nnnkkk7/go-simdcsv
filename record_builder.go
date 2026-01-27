@@ -64,7 +64,6 @@ func (r *Reader) buildRecordWithValidation(row rowInfo, rowIdx int) ([]string, e
 	fields := r.parseResult.fields[row.firstField:endIdx]
 
 	for i, field := range fields {
-		// Get raw field bounds directly from field (inlined from getFieldRawBounds)
 		rawStart, rawEnd := uint64(field.rawStart()), uint64(field.rawEnd())
 
 		// Validate quotes unless LazyQuotes is enabled or no quotes exist in input
