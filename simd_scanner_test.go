@@ -1202,21 +1202,6 @@ func equalPositions(a, b []int) bool {
 }
 
 // equalSlices compares two int slices
-func equalSlices(a, b []int) bool {
-	if len(a) == 0 && len(b) == 0 {
-		return true
-	}
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
 func equalBoolSlices(a, b []bool) bool {
 	if len(a) != len(b) {
 		return false

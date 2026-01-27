@@ -328,7 +328,8 @@ func scanBuffer(buf []byte, separatorChar byte) *scanResult {
 	}
 
 	// Generate masks for chunk 1 (lookahead) if it exists
-	if chunkCount > 1 {
+	// Note: chunkCount > 1 implies len(buf) > simdChunkSize, so buf[simdChunkSize:] is safe
+	if chunkCount > 1 && len(buf) > simdChunkSize {
 		if len(buf) >= 2*simdChunkSize {
 			nextMasks.quote, nextMasks.sep, nextMasks.cr, nextMasks.nl = generateMasks(buf[simdChunkSize:2*simdChunkSize], separatorChar)
 		} else {
