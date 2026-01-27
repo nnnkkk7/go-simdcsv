@@ -28,7 +28,7 @@ Same API as `encoding/csv` - just change the import.
 | Feature | Description |
 |---------|-------------|
 | **API Compatible** | Drop-in replacement for `encoding/csv.Reader` and `Writer` |
-| **RFC 4180** | Quoted fields, escaped quotes (`""`), multiline fields, CRLF normalization |
+| **Full CSV Support** | Quoted fields, escaped quotes (`""`), multiline fields, CRLF handling |
 | **Auto Fallback** | Gracefully falls back to scalar on non-AVX-512 CPUs |
 | **Direct Byte API** | `ParseBytes()` and `ParseBytesStreaming()` for `[]byte` input |
 
@@ -40,57 +40,35 @@ go get github.com/nnnkkk7/go-simdcsv
 
 ## Usage
 
-### Basic Reading
+### Reading
 
 ```go
-reader := csv.NewReader(strings.NewReader(data))
-records, err := reader.ReadAll()
-if err != nil {
-    log.Fatal(err)
-}
-```
+// All at once
+records, err := csv.NewReader(r).ReadAll()
 
-### Record-by-Record
-
-```go
+// Record by record
 reader := csv.NewReader(r)
 for {
     record, err := reader.Read()
-    if err == io.EOF {
-        break
-    }
-    if err != nil {
-        log.Fatal(err)
-    }
+    if err == io.EOF { break }
+    if err != nil { return err }
     // process record
 }
-```
 
-### Direct Byte Parsing
-
-For maximum performance with `[]byte` input:
-
-```go
+// Direct byte parsing (fastest)
 records, err := csv.ParseBytes(data, ',')
-```
 
-### Streaming with Callback
-
-```go
-err := csv.ParseBytesStreaming(data, ',', func(record []string) error {
-    fmt.Println(record)
-    return nil
+// Streaming callback
+csv.ParseBytesStreaming(data, ',', func(record []string) error {
+    return processRecord(record)
 })
 ```
 
 ### Writing
 
 ```go
-writer := csv.NewWriter(os.Stdout)
-err := writer.WriteAll([][]string{
-    {"name", "age"},
-    {"Alice", "30"},
-})
+writer := csv.NewWriter(w)
+writer.WriteAll(records)
 ```
 
 ### Configuration
@@ -128,8 +106,6 @@ Benchmarks on AMD EPYC 9R14 with AVX-512 (Go 1.26, `GOEXPERIMENT=simd`).
 | All quoted fields | 10K rows | 657 MB/s | 439 MB/s | -33% slower |
 
 **Note:** SIMD acceleration benefits unquoted CSV data at scale. Quoted fields currently have overhead from validation passes.
-
-```
 
 ## Architecture
 
