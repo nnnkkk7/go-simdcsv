@@ -6,8 +6,9 @@ import (
 	"bufio"
 	"io"
 	"math/bits"
-	"simd/archsimd"
 	"unsafe"
+
+	"simd/archsimd"
 )
 
 // Writer writes records using CSV encoding.

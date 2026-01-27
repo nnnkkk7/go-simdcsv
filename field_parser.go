@@ -347,4 +347,3 @@ func postProcessFields(_ []byte, result *parseResult, postProcChunks []int) {
 		}
 	}
 }
-
