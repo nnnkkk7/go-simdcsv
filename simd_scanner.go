@@ -279,95 +279,77 @@ func normalizeCRLF(crMask, nlMask, nextNlMask uint64, validBits int) uint64 {
 // processQuotesAndSeparators processes masks to track quote state and invalidate
 // separators inside quoted regions. Detects escaped double quotes ("") including
 // those spanning chunk boundaries.
-func processQuotesAndSeparators(quoteMask, sepMask, newlineMask, nextQuoteMask uint64, state *scanState) (quoteMaskOut, sepMaskOut uint64, hasDoubleQuote, boundaryDoubleQuote bool) {
+func processQuotesAndSeparators(quoteMask, sepMask, nextQuoteMask uint64, state *scanState) (quoteMaskOut, sepMaskOut uint64, hasDoubleQuote, boundaryDoubleQuote bool) {
 	quoteMaskOut = quoteMask
-	sepMaskOut = sepMask
 	workQuote := quoteMask
-	workSep := sepMask
-	workNewline := newlineMask
 	quoted := state.quoted
+	initialQuoted := quoted
 
-	for {
-		combined := workQuote | workSep | workNewline
-		if combined == 0 {
-			break
-		}
-
-		pos := bits.TrailingZeros64(combined)
+	// Step 1: Process quotes to detect and remove double quotes
+	for workQuote != 0 {
+		pos := bits.TrailingZeros64(workQuote)
 		bit := uint64(1) << pos
 
-		switch {
-		case workQuote&bit != 0:
-			if quoted != 0 {
-				// Inside quotes: check for escaped double quote
-				if pos == simdChunkSize-1 && nextQuoteMask&1 != 0 {
-					// Boundary double quote
-					quoteMaskOut &= ^(uint64(1) << (simdChunkSize - 1))
-					hasDoubleQuote = true
-					boundaryDoubleQuote = true
-				} else if pos < simdChunkSize-1 && workQuote&(uint64(1)<<(pos+1)) != 0 {
-					// Adjacent double quote
-					quoteMaskOut &= ^(uint64(3) << pos)
-					hasDoubleQuote = true
-					workQuote &= ^(uint64(1) << (pos + 1))
-				} else {
-					// Closing quote
-					quoted = 0
-				}
+		if quoted != 0 {
+			// Inside quotes: check for escaped double quote
+			if pos == simdChunkSize-1 && nextQuoteMask&1 != 0 {
+				// Boundary double quote
+				quoteMaskOut &^= uint64(1) << (simdChunkSize - 1)
+				hasDoubleQuote = true
+				boundaryDoubleQuote = true
+			} else if pos < simdChunkSize-1 && workQuote&(uint64(1)<<(pos+1)) != 0 {
+				// Adjacent double quote
+				quoteMaskOut &^= uint64(3) << pos
+				hasDoubleQuote = true
+				workQuote &^= uint64(1) << (pos + 1)
 			} else {
-				// Opening quote
-				quoted = ^uint64(0)
+				// Closing quote
+				quoted = 0
 			}
-			workQuote &= ^bit
-
-		case workSep&bit != 0:
-			if quoted != 0 {
-				sepMaskOut &= ^bit
-			}
-			workSep &= ^bit
-
-		default:
-			workNewline &= ^bit
+		} else {
+			// Opening quote
+			quoted = ^uint64(0)
 		}
+		workQuote &^= bit
 	}
 
 	state.quoted = quoted
+
+	// Step 2: Invalidate separators using prefix XOR on clean quote mask
+	inQuote := quoteMaskOut
+	inQuote ^= inQuote << 1
+	inQuote ^= inQuote << 2
+	inQuote ^= inQuote << 4
+	inQuote ^= inQuote << 8
+	inQuote ^= inQuote << 16
+	inQuote ^= inQuote << 32
+
+	if initialQuoted != 0 {
+		inQuote = ^inQuote
+	}
+
+	sepMaskOut = sepMask &^ inQuote
 	return
 }
 
 // invalidateNewlinesInQuotes removes newline bits that are inside quoted regions.
 func invalidateNewlinesInQuotes(quoteMask, newlineMask uint64, state *scanState) uint64 {
-	quoted := state.quoted
-	result := newlineMask
-	workQuote := quoteMask
-	workNewline := newlineMask
+	// Prefix XOR: inQuote[i] = 1 iff positions 0..i have odd number of quotes
+	inQuote := quoteMask
+	inQuote ^= inQuote << 1
+	inQuote ^= inQuote << 2
+	inQuote ^= inQuote << 4
+	inQuote ^= inQuote << 8
+	inQuote ^= inQuote << 16
+	inQuote ^= inQuote << 32
 
-	for {
-		combined := workQuote | workNewline
-		if combined == 0 {
-			break
-		}
-
-		pos := bits.TrailingZeros64(combined)
-		bit := uint64(1) << pos
-
-		if workQuote&bit != 0 {
-			if quoted != 0 {
-				quoted = 0
-			} else {
-				quoted = ^uint64(0)
-			}
-			workQuote &= ^bit
-			continue
-		}
-
-		if quoted != 0 {
-			result &= ^bit
-		}
-		workNewline &= ^bit
+	// If we started inside a quoted region, invert the mask
+	if state.quoted != 0 {
+		inQuote = ^inQuote
 	}
 
-	return result
+	// Clear newline bits that are inside quoted regions
+	return newlineMask &^ inQuote
 }
 
 // =============================================================================
@@ -614,7 +596,7 @@ func processChunkWithQuotes(chunkIdx int, quoteMask, sepMask, newlineMask, nextQ
 	initialQuoted := state.quoted
 
 	quoteMaskOut, sepMaskOut, hasDoubleQuote, boundaryDoubleQuote := processQuotesAndSeparators(
-		quoteMask, sepMask, newlineMask, nextQuoteMask, state,
+		quoteMask, sepMask, nextQuoteMask, state,
 	)
 
 	if boundaryDoubleQuote {

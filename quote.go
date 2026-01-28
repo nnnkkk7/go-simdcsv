@@ -128,36 +128,30 @@ func findClosingQuoteSIMD(data []byte, startAfterOpenQuote int) int {
 func processQuoteMask(data []byte, chunkStart int, mask uint32) (int, int, bool) {
 	for mask != 0 {
 		pos := bits.TrailingZeros32(mask)
-		absPos := chunkStart + pos
 
-		if !isEscapedQuote(data, absPos) {
-			return absPos, chunkStart, false
-		}
-
-		// Clear both bits of the escaped quote pair
-		mask = clearBitU32(mask, pos)
-		if pos+1 < simdHalfChunk {
-			mask = clearBitU32(mask, pos+1)
-		}
-
-		// Handle boundary case: escaped quote spans chunk boundary
+		// Boundary case: quote at last position of chunk
 		if pos == simdHalfChunk-1 {
 			newPos := chunkStart + simdHalfChunk
 			if newPos < len(data) && data[newPos] == '"' {
-				newPos++
+				// Boundary double quote → skip both
+				return -1, newPos + 1, false
 			}
-			return -1, newPos, false
+			// Closing quote at boundary
+			return chunkStart + pos, chunkStart, false
 		}
+
+		// Check if next bit is also set (double quote "")
+		nextBit := uint32(1) << (pos + 1)
+		if mask&nextBit != 0 {
+			// Double quote → clear both bits and continue
+			mask &^= (uint32(1) << pos) | nextBit
+			continue
+		}
+
+		// Single quote = closing quote
+		return chunkStart + pos, chunkStart, false
 	}
 
 	return -1, chunkStart + simdHalfChunk, false
 }
 
-// =============================================================================
-// Bit Manipulation Utilities
-// =============================================================================
-
-// clearBitU32 clears the bit at position pos in a 32-bit mask.
-func clearBitU32(mask uint32, pos int) uint32 {
-	return mask &^ (uint32(1) << pos)
-}
