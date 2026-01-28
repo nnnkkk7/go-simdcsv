@@ -4,5 +4,3 @@ module github.com/nnnkkk7/go-simdcsv
 // For local development on Apple Silicon, use Docker: make docker-test
 // Using go 1.25 for IDE compatibility (SIMD code won't compile locally)
 go 1.25
-
-require golang.org/x/sys v0.40.0
