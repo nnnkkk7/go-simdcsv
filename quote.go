@@ -154,4 +154,3 @@ func processQuoteMask(data []byte, chunkStart int, mask uint32) (int, int, bool)
 
 	return -1, chunkStart + simdHalfChunk, false
 }
-
