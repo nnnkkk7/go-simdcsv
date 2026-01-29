@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.0.13](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.12...v0.0.13) - 2026-01-29
+- chore: update CPU feature detection to use archsimd package by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/60
+- perf: optimize SIMD mask processing with prefix XOR by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/62
+- refactor: enhance record parsing efficiency by introducing no-quote path and optimizing memory usage by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/63
+- perf: improve memory allocation and parsing efficiency  by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/64
+
 ## [v0.0.12](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.11...v0.0.12) - 2026-01-27
 - docs: add performance comparison by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/54
 - docs: update readme by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/56
