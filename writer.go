@@ -125,6 +125,7 @@ func (w *Writer) fieldNeedsQuotesScalar(field string) bool {
 // fieldNeedsQuotesSIMD uses SIMD to detect special characters requiring quoting.
 func (w *Writer) fieldNeedsQuotesSIMD(field string) bool {
 	data := unsafe.Slice(unsafe.StringData(field), len(field))
+	int8Data := bytesToInt8Slice(data)
 
 	commaCmp := archsimd.BroadcastInt8x32(int8(w.Comma))
 	newlineCmp := archsimd.BroadcastInt8x32('\n')
@@ -134,7 +135,7 @@ func (w *Writer) fieldNeedsQuotesSIMD(field string) bool {
 	// Process 32-byte chunks
 	offset := 0
 	for offset+32 <= len(data) {
-		chunk := archsimd.LoadInt8x32((*[32]int8)(unsafe.Pointer(&data[offset])))
+		chunk := archsimd.LoadInt8x32Slice(int8Data[offset : offset+32])
 
 		commaMask := chunk.Equal(commaCmp).ToBits()
 		newlineMask := chunk.Equal(newlineCmp).ToBits()
@@ -147,7 +148,7 @@ func (w *Writer) fieldNeedsQuotesSIMD(field string) bool {
 		offset += 32
 	}
 
-	// Process remaining bytes
+	// Process remaining bytes (< 32 bytes, scalar is sufficient)
 	for ; offset < len(data); offset++ {
 		c := data[offset]
 		if c == byte(w.Comma) || c == '\n' || c == '\r' || c == '"' {
@@ -187,6 +188,7 @@ func (w *Writer) writeQuotedFieldScalar(field string) error {
 // writeQuotedFieldSIMD escapes quotes using SIMD to find quote positions.
 func (w *Writer) writeQuotedFieldSIMD(field string) error {
 	data := unsafe.Slice(unsafe.StringData(field), len(field))
+	int8Data := bytesToInt8Slice(data)
 	quoteCmp := archsimd.BroadcastInt8x32('"')
 
 	offset := 0
@@ -194,7 +196,7 @@ func (w *Writer) writeQuotedFieldSIMD(field string) error {
 
 	// Process 32-byte chunks
 	for offset+32 <= len(data) {
-		chunk := archsimd.LoadInt8x32((*[32]int8)(unsafe.Pointer(&data[offset])))
+		chunk := archsimd.LoadInt8x32Slice(int8Data[offset : offset+32])
 		mask := chunk.Equal(quoteCmp).ToBits()
 
 		for mask != 0 {
@@ -215,7 +217,7 @@ func (w *Writer) writeQuotedFieldSIMD(field string) error {
 		offset += 32
 	}
 
-	// Process remaining bytes
+	// Process remaining bytes (< 32 bytes, scalar is sufficient)
 	for ; offset < len(data); offset++ {
 		if data[offset] == '"' {
 			if _, err := w.w.WriteString(field[lastWritten : offset+1]); err != nil {

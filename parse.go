@@ -3,6 +3,8 @@
 //nolint:gosec // G115: Integer conversions are safe - buffer size bounded by DefaultMaxInputSize (2GB)
 package simdcsv
 
+import "unsafe"
+
 // ============================================================================
 // Public API - Direct Parsing
 // ============================================================================
@@ -65,12 +67,12 @@ func buildRecords(buf []byte, pr *parseResult, hasCR bool) [][]string {
 
 	records := make([][]string, len(pr.rows))
 
-	// Shared buffers reused across records
-	var recordBuf []byte
+	// fieldEnds can be reused, but recordBuf must be unique per record for unsafe.String
 	var fieldEnds []int
 
 	for i, row := range pr.rows {
-		recordBuf, fieldEnds = accumulateFields(buf, pr, row, hasCR, recordBuf[:0], fieldEnds[:0])
+		var recordBuf []byte
+		recordBuf, fieldEnds = accumulateFields(buf, pr, row, hasCR, recordBuf, fieldEnds[:0])
 		records[i] = sliceFieldsFromBuffer(recordBuf, fieldEnds)
 	}
 	return records
@@ -97,9 +99,13 @@ func accumulateFields(buf []byte, pr *parseResult, row rowInfo, hasCR bool, reco
 }
 
 // sliceFieldsFromBuffer converts the accumulated buffer to individual field strings.
-// Uses a single string conversion followed by zero-copy slicing.
+// Uses unsafe.String for zero-copy conversion. Caller must ensure recordBuf is not reused.
 func sliceFieldsFromBuffer(recordBuf []byte, fieldEnds []int) []string {
-	str := string(recordBuf)
+	if len(recordBuf) == 0 {
+		return make([]string, len(fieldEnds))
+	}
+	// Zero-copy string conversion - safe because recordBuf is unique per record
+	str := unsafe.String(unsafe.SliceData(recordBuf), len(recordBuf))
 	record := make([]string, len(fieldEnds))
 	prevEnd := 0
 	for i, end := range fieldEnds {

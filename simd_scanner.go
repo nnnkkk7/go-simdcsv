@@ -9,6 +9,15 @@ import (
 	"unsafe"
 )
 
+// bytesToInt8Slice converts a byte slice to an int8 slice without copying.
+// This enables use of LoadInt8xNSlice functions which are safer than pointer casts.
+func bytesToInt8Slice(b []byte) []int8 {
+	if len(b) == 0 {
+		return nil
+	}
+	return unsafe.Slice((*int8)(unsafe.Pointer(unsafe.SliceData(b))), len(b))
+}
+
 // useAVX512 indicates whether AVX-512 instructions are available at runtime.
 var useAVX512 bool
 
@@ -177,7 +186,7 @@ func generateMasksAVX512(data []byte, separator byte) (quote, sep, cr, nl uint64
 
 // generateMasksAVX512WithCmp generates masks reusing pre-broadcasted comparators.
 func generateMasksAVX512WithCmp(data []byte, quoteCmp, sepCmp, crCmp, nlCmp archsimd.Int8x64) (quote, sep, cr, nl uint64) {
-	chunk := archsimd.LoadInt8x64((*[simdChunkSize]int8)(unsafe.Pointer(&data[0])))
+	chunk := archsimd.LoadInt8x64Slice(bytesToInt8Slice(data))
 	return chunk.Equal(quoteCmp).ToBits(),
 		chunk.Equal(sepCmp).ToBits(),
 		chunk.Equal(crCmp).ToBits(),
@@ -222,17 +231,21 @@ func generateMasksPadded(data []byte, separator byte) (quote, sep, cr, nl uint64
 }
 
 // generateMasksPaddedWithCmp is the AVX-512 version of generateMasksPadded.
+// Uses LoadInt8x64SlicePart to safely load partial chunks without manual padding.
 func generateMasksPaddedWithCmp(data []byte, quoteCmp, sepCmp, crCmp, nlCmp archsimd.Int8x64) (quote, sep, cr, nl uint64, validBits int) {
 	validBits = len(data)
 	if validBits == 0 {
 		return 0, 0, 0, 0, 0
 	}
 
-	var padded [simdChunkSize]byte
-	copy(padded[:], data)
+	// SlicePart safely loads partial data, zero-filling unused lanes
+	chunk := archsimd.LoadInt8x64SlicePart(bytesToInt8Slice(data))
+	quote = chunk.Equal(quoteCmp).ToBits()
+	sep = chunk.Equal(sepCmp).ToBits()
+	cr = chunk.Equal(crCmp).ToBits()
+	nl = chunk.Equal(nlCmp).ToBits()
 
-	quote, sep, cr, nl = generateMasksAVX512WithCmp(padded[:], quoteCmp, sepCmp, crCmp, nlCmp)
-
+	// Mask out bits beyond valid data
 	if validBits < simdChunkSize {
 		mask := (uint64(1) << validBits) - 1
 		quote &= mask

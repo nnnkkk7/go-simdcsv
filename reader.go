@@ -252,6 +252,16 @@ func (r *Reader) readNextRecord() ([]string, error) {
 			continue
 		}
 
+		// Fast path: no quotes anywhere, so no unescape/validation needed.
+		if !r.state.hasQuotes {
+			record := r.buildRecordNoQuotes(rowInfo)
+			if err := r.validateFieldCount(record, rowInfo); err != nil {
+				return record, err
+			}
+			r.state.nonCommentRecordCount++
+			return record, nil
+		}
+
 		record, err := r.buildRecordWithValidation(rowInfo, rowIdx)
 		if err != nil {
 			return record, err

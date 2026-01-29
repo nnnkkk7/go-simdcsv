@@ -4,7 +4,6 @@ package simdcsv
 
 import (
 	"math/bits"
-	"unsafe"
 
 	"simd/archsimd"
 )
@@ -99,10 +98,11 @@ func findClosingQuoteScalar(data []byte, startAfterOpenQuote int) int {
 // findClosingQuoteSIMD uses AVX-512 to find the closing quote in simdHalfChunk-byte chunks.
 func findClosingQuoteSIMD(data []byte, startAfterOpenQuote int) int {
 	quoteCmp := archsimd.BroadcastInt8x32('"')
+	int8Data := bytesToInt8Slice(data)
 	i := startAfterOpenQuote
 
 	for i+simdHalfChunk <= len(data) {
-		chunk := archsimd.LoadInt8x32((*[simdHalfChunk]int8)(unsafe.Pointer(&data[i])))
+		chunk := archsimd.LoadInt8x32Slice(int8Data[i : i+simdHalfChunk])
 		mask := chunk.Equal(quoteCmp).ToBits()
 
 		if mask == 0 {

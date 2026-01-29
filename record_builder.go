@@ -45,6 +45,40 @@ func (r *Reader) buildRecordWithValidation(row rowInfo, rowIdx int) ([]string, e
 	return r.buildFinalRecord(fieldCount), nil
 }
 
+// buildRecordNoQuotes builds a record when the input contains no quotes.
+// It avoids the recordBuffer copy path and mirrors appendSimpleContent behavior.
+func (r *Reader) buildRecordNoQuotes(row rowInfo) []string {
+	fieldCount := row.fieldCount
+	record := r.allocateRecord(fieldCount)
+	r.state.fieldPositions = r.ensureFieldPositionsCapacity(fieldCount)
+
+	fields := r.getFieldsForRow(row, fieldCount)
+	buf := r.state.rawBuffer
+	bufLen := uint32(len(buf))
+
+	for i, field := range fields {
+		start := field.start
+		end := start + field.length
+		if start >= bufLen {
+			record[i] = ""
+			r.state.fieldPositions[i] = position{line: row.lineNum, column: int(start) + 1}
+			continue
+		}
+		if end > bufLen {
+			end = bufLen
+		}
+
+		content := buf[start:end]
+		if r.TrimLeadingSpace {
+			content = trimLeftBytes(content)
+		}
+
+		record[i] = string(content)
+		r.state.fieldPositions[i] = position{line: row.lineNum, column: int(start) + 1}
+	}
+	return record
+}
+
 // getFieldsForRow extracts the slice of fieldInfo for the given row.
 func (r *Reader) getFieldsForRow(row rowInfo, fieldCount int) []fieldInfo {
 	endIdx := row.firstField + fieldCount
