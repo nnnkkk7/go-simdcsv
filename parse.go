@@ -58,8 +58,8 @@ func ParseBytesStreaming(data []byte, comma rune, callback func([]string) error)
 // ============================================================================
 
 // buildRecords converts a parseResult to [][]string.
-// Optimizes memory by accumulating fields into a single buffer per record,
-// then using zero-copy slicing after a single string conversion.
+// Fast path: zero-copy when no transformation needed.
+// Slow path: accumulate into buffer when unescape/CRLF handling required.
 func buildRecords(buf []byte, pr *parseResult, hasCR bool) [][]string {
 	if pr == nil || len(pr.rows) == 0 {
 		return nil
@@ -67,15 +67,63 @@ func buildRecords(buf []byte, pr *parseResult, hasCR bool) [][]string {
 
 	records := make([][]string, len(pr.rows))
 
-	// fieldEnds can be reused, but recordBuf must be unique per record for unsafe.String
-	var fieldEnds []int
+	// Check if any field needs transformation
+	needsTransform := hasCR
+	if !needsTransform {
+		for _, f := range pr.fields {
+			if f.needsUnescape() {
+				needsTransform = true
+				break
+			}
+		}
+	}
 
+	// Fast path: zero-copy direct from buffer when no transformation needed
+	if !needsTransform {
+		for i, row := range pr.rows {
+			records[i] = buildRecordZeroCopy(buf, pr, row)
+		}
+		return records
+	}
+
+	// Slow path: accumulate with transformation
+	var fieldEnds []int
 	for i, row := range pr.rows {
 		var recordBuf []byte
 		recordBuf, fieldEnds = accumulateFields(buf, pr, row, hasCR, recordBuf, fieldEnds[:0])
 		records[i] = sliceFieldsFromBuffer(recordBuf, fieldEnds)
 	}
 	return records
+}
+
+// buildRecordZeroCopy creates a record with zero-copy strings from buf.
+// Only safe when no transformation (unescape/CRLF) is needed.
+func buildRecordZeroCopy(buf []byte, pr *parseResult, row rowInfo) []string {
+	if row.fieldCount == 0 {
+		return nil
+	}
+	record := make([]string, row.fieldCount)
+	bufLen := uint32(len(buf))
+	for i := 0; i < row.fieldCount; i++ {
+		fieldIdx := row.firstField + i
+		if fieldIdx >= len(pr.fields) {
+			break
+		}
+		field := pr.fields[fieldIdx]
+		if field.length == 0 {
+			continue
+		}
+		start := field.start
+		end := start + field.length
+		if start >= bufLen {
+			continue
+		}
+		if end > bufLen {
+			end = bufLen
+		}
+		record[i] = unsafe.String(&buf[start], int(end-start))
+	}
+	return record
 }
 
 // buildRecord builds a single record from a rowInfo (for streaming API).
@@ -101,15 +149,20 @@ func accumulateFields(buf []byte, pr *parseResult, row rowInfo, hasCR bool, reco
 // sliceFieldsFromBuffer converts the accumulated buffer to individual field strings.
 // Uses unsafe.String for zero-copy conversion. Caller must ensure recordBuf is not reused.
 func sliceFieldsFromBuffer(recordBuf []byte, fieldEnds []int) []string {
+	fieldCount := len(fieldEnds)
+	if fieldCount == 0 {
+		return nil
+	}
+	record := make([]string, fieldCount)
 	if len(recordBuf) == 0 {
-		return make([]string, len(fieldEnds))
+		return record
 	}
 	// Zero-copy string conversion - safe because recordBuf is unique per record
-	str := unsafe.String(unsafe.SliceData(recordBuf), len(recordBuf))
-	record := make([]string, len(fieldEnds))
 	prevEnd := 0
 	for i, end := range fieldEnds {
-		record[i] = str[prevEnd:end]
+		if prevEnd < end && prevEnd < len(recordBuf) {
+			record[i] = unsafe.String(&recordBuf[prevEnd], end-prevEnd)
+		}
 		prevEnd = end
 	}
 	return record

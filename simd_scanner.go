@@ -80,8 +80,12 @@ type chunkMasks struct {
 // =============================================================================
 
 // scanResultPoolCapacity is the pre-allocated capacity for pooled scanResult slices.
-// 512 chunks = ~32KB input, balancing small and large file performance.
-const scanResultPoolCapacity = 512
+// 4096 chunks = ~256KB input, reducing allocations for typical CSV sizes.
+const scanResultPoolCapacity = 4096
+
+// scanResultLargeThreshold retains large scanResults to avoid repeated allocations across GCs.
+// 16384 chunks = ~1MB input.
+const scanResultLargeThreshold = 16384
 
 // scanResultPool provides reusable scanResult objects to reduce allocations.
 var scanResultPool = sync.Pool{
@@ -94,6 +98,12 @@ var scanResultPool = sync.Pool{
 			chunkHasQuote:  make([]bool, 0, scanResultPoolCapacity),
 		}
 	},
+}
+
+// scanResultLargeCache retains a single large scanResult across GC cycles.
+var scanResultLargeCache struct {
+	mu sync.Mutex
+	sr *scanResult
 }
 
 // reset clears the scanResult for reuse while preserving slice capacity.
@@ -116,6 +126,15 @@ func (sr *scanResult) reset() {
 func releaseScanResult(sr *scanResult) {
 	if sr != nil {
 		sr.reset()
+		if cap(sr.quoteMasks) >= scanResultLargeThreshold {
+			scanResultLargeCache.mu.Lock()
+			if scanResultLargeCache.sr == nil || cap(scanResultLargeCache.sr.quoteMasks) < cap(sr.quoteMasks) {
+				scanResultLargeCache.sr = sr
+				scanResultLargeCache.mu.Unlock()
+				return
+			}
+			scanResultLargeCache.mu.Unlock()
+		}
 		scanResultPool.Put(sr)
 	}
 }
@@ -125,27 +144,25 @@ func releaseScanResult(sr *scanResult) {
 // =============================================================================
 
 // ensureUint64SliceCap ensures slice has at least required length.
-// Uses 2x growth with 25% headroom when reallocation is needed.
+// Reuses existing capacity when possible.
 func ensureUint64SliceCap(s []uint64, required int) []uint64 {
 	if cap(s) >= required {
 		return s[:required]
 	}
-	newCap := max(cap(s)*2, required)
-	newCap += newCap / 4
-	return make([]uint64, required, newCap)
+	// Allocate exact size to avoid over-allocation for small inputs
+	return make([]uint64, required)
 }
 
 // ensureBoolSliceCap ensures slice has at least required length (cleared).
-// Uses 2x growth with 25% headroom when reallocation is needed.
+// Reuses existing capacity when possible.
 func ensureBoolSliceCap(s []bool, required int) []bool {
 	if cap(s) >= required {
 		s = s[:required]
 		clear(s)
 		return s
 	}
-	newCap := max(cap(s)*2, required)
-	newCap += newCap / 4
-	return make([]bool, required, newCap)
+	// Allocate exact size to avoid over-allocation for small inputs
+	return make([]bool, required)
 }
 
 // =============================================================================
@@ -481,6 +498,20 @@ func scanBufferWithGenerator(buf []byte, gen maskGenerator) *scanResult {
 
 // acquireScanResult gets a pooled scanResult and initializes it for the given chunk count.
 func acquireScanResult(chunkCount int) *scanResult {
+	if chunkCount >= scanResultLargeThreshold {
+		scanResultLargeCache.mu.Lock()
+		result := scanResultLargeCache.sr
+		if result != nil && cap(result.quoteMasks) >= chunkCount {
+			scanResultLargeCache.sr = nil
+			scanResultLargeCache.mu.Unlock()
+			result.reset()
+			result.chunkCount = chunkCount
+			initScanResultSlices(result, chunkCount)
+			return result
+		}
+		scanResultLargeCache.mu.Unlock()
+	}
+
 	result := scanResultPool.Get().(*scanResult)
 	result.reset()
 	result.chunkCount = chunkCount
