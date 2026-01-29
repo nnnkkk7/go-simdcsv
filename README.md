@@ -101,9 +101,9 @@ Benchmarks on AMD EPYC 9R14 with AVX-512 (Go 1.26, `GOEXPERIMENT=simd`).
 
 | Content | Size | encoding/csv | go-simdcsv | Comparison |
 |---------|------|--------------|------------|------------|
-| Unquoted fields | 10K rows | 216 MB/s | 262 MB/s | **+21% faster** |
-| Unquoted fields | 100K rows | 214 MB/s | 224 MB/s | **+5% faster** |
-| All quoted fields | 10K rows | 657 MB/s | 439 MB/s | -33% slower |
+| Unquoted fields | 10K rows | 228 MB/s | 309 MB/s | **+35% faster** |
+| Unquoted fields | 100K rows | 214 MB/s | 288 MB/s | **+35% faster** |
+| All quoted fields | 10K rows | 765 MB/s | 537 MB/s | -30% slower |
 
 **Note:** SIMD acceleration benefits unquoted CSV data at scale. Quoted fields currently have overhead from validation passes.
 
