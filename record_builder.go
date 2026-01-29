@@ -65,7 +65,8 @@ func (r *Reader) buildRecordWithValidation(row rowInfo, rowIdx int) ([]string, e
 	return r.buildFinalRecord(fieldCount), nil
 }
 
-// buildRecordWithValidationZeroCopy builds a record with zero-copy strings while still validating.
+// buildRecordWithValidationZeroCopy builds a record with zero-copy strings while validating.
+// Zero-copy is safe here because rawBuffer outlives the returned record strings.
 func (r *Reader) buildRecordWithValidationZeroCopy(row rowInfo, fields []fieldInfo) ([]string, error) {
 	fieldCount := row.fieldCount
 	record := r.allocateRecord(fieldCount)
@@ -75,44 +76,51 @@ func (r *Reader) buildRecordWithValidationZeroCopy(row rowInfo, fields []fieldIn
 	bufLen := uint32(len(buf))
 
 	for i, field := range fields {
-		// Validate even in zero-copy path
 		if err := r.validateFieldIfNeeded(field, row.lineNum); err != nil {
 			return record[:i], err
 		}
 
-		start := field.start
-		end := start + field.length
-		if start >= bufLen {
-			record[i] = ""
-		} else {
-			if end > bufLen {
-				end = bufLen
-			}
-			// Zero-copy string from rawBuffer
-			record[i] = unsafe.String(&buf[start], int(end-start))
-		}
+		record[i] = r.extractFieldString(buf, bufLen, field)
 		r.state.fieldPositions[i] = position{line: row.lineNum, column: int(field.rawStart()) + 1}
 	}
 	return record, nil
 }
 
+// extractFieldString returns a zero-copy string for the field content.
+// Returns empty string if field is out of bounds.
+func (r *Reader) extractFieldString(buf []byte, bufLen uint32, field fieldInfo) string {
+	start := field.start
+	end := start + field.length
+	if start >= bufLen {
+		return ""
+	}
+	if end > bufLen {
+		end = bufLen
+	}
+	return unsafe.String(&buf[start], int(end-start))
+}
+
 // buildRecordNoQuotes builds a record when the input contains no quotes.
 // Uses a single row string to avoid per-field allocations.
+// Zero-copy when TrimLeadingSpace is disabled; copies when trimming is needed.
 func (r *Reader) buildRecordNoQuotes(row rowInfo) []string {
 	fieldCount := row.fieldCount
 	record := r.allocateRecord(fieldCount)
 	r.state.fieldPositions = r.ensureFieldPositionsCapacity(fieldCount)
 
 	fields := r.getFieldsForRow(row, fieldCount)
-	buf := r.state.rawBuffer
-	bufLen := uint32(len(buf))
-
 	if len(fields) == 0 {
 		return record
 	}
 
+	buf := r.state.rawBuffer
+	bufLen := uint32(len(buf))
+
+	// Calculate row span in buffer
 	rowStart := fields[0].rawStart()
 	rowEnd := fields[len(fields)-1].rawEnd()
+
+	// Handle out-of-bounds row
 	if rowStart >= bufLen {
 		for i, field := range fields {
 			record[i] = ""
@@ -120,63 +128,74 @@ func (r *Reader) buildRecordNoQuotes(row rowInfo) []string {
 		}
 		return record
 	}
-	if rowEnd > bufLen {
-		rowEnd = bufLen
-	}
-	if rowEnd < rowStart {
-		rowEnd = rowStart
-	}
 
-	var rowStr string
-	if r.TrimLeadingSpace {
-		rowStr = string(buf[rowStart:rowEnd])
-	} else {
-		// Zero-copy string from rawBuffer - safe because rawBuffer outlives record.
-		rowStr = unsafe.String(&buf[rowStart], int(rowEnd-rowStart))
-	}
+	// Clamp row bounds
+	rowEnd = clampUint32(rowEnd, rowStart, bufLen)
+
+	// Create row string (copy if trimming, zero-copy otherwise)
+	rowStr := r.createRowString(buf, rowStart, rowEnd)
 	rowStrLen := len(rowStr)
 
+	// Extract fields from row string
 	for i, field := range fields {
-		start := field.start
-		end := start + field.length
-		rawStart := field.rawStart()
-
-		if start < bufLen {
-			if end > bufLen {
-				end = bufLen
-			}
-			if r.TrimLeadingSpace && start < end {
-				for start < end && (buf[start] == ' ' || buf[start] == '\t') {
-					start++
-				}
-			}
-		}
-
-		if start < rowStart {
-			start = rowStart
-		}
-		if end < start {
-			end = start
-		}
-		relStart := int(start - rowStart)
-		relEnd := int(end - rowStart)
-		if relStart < 0 {
-			relStart = 0
-		}
-		if relStart > rowStrLen {
-			relStart = rowStrLen
-		}
-		if relEnd < relStart {
-			relEnd = relStart
-		}
-		if relEnd > rowStrLen {
-			relEnd = rowStrLen
-		}
-
-		record[i] = rowStr[relStart:relEnd]
-		r.state.fieldPositions[i] = position{line: row.lineNum, column: int(rawStart) + 1}
+		record[i] = r.extractFieldFromRow(buf, bufLen, rowStr, rowStrLen, rowStart, field)
+		r.state.fieldPositions[i] = position{line: row.lineNum, column: int(field.rawStart()) + 1}
 	}
 	return record
+}
+
+// clampUint32 clamps value to [minVal, maxVal].
+func clampUint32(value, minVal, maxVal uint32) uint32 {
+	if value < minVal {
+		return minVal
+	}
+	if value > maxVal {
+		return maxVal
+	}
+	return value
+}
+
+// createRowString creates a string for the row span.
+// Copies when TrimLeadingSpace is enabled; zero-copy otherwise.
+func (r *Reader) createRowString(buf []byte, rowStart, rowEnd uint32) string {
+	if r.TrimLeadingSpace {
+		return string(buf[rowStart:rowEnd])
+	}
+	return unsafe.String(&buf[rowStart], int(rowEnd-rowStart))
+}
+
+// extractFieldFromRow extracts a field string from the row string.
+func (r *Reader) extractFieldFromRow(buf []byte, bufLen uint32, rowStr string, rowStrLen int, rowStart uint32, field fieldInfo) string {
+	start := field.start
+	end := start + field.length
+
+	// Apply trimming if needed
+	if r.TrimLeadingSpace && start < bufLen && start < end {
+		trimEnd := end
+		if trimEnd > bufLen {
+			trimEnd = bufLen
+		}
+		for start < trimEnd && (buf[start] == ' ' || buf[start] == '\t') {
+			start++
+		}
+	}
+
+	// Calculate relative positions in row string
+	relStart := clampInt(int(start)-int(rowStart), 0, rowStrLen)
+	relEnd := clampInt(int(end)-int(rowStart), relStart, rowStrLen)
+
+	return rowStr[relStart:relEnd]
+}
+
+// clampInt clamps value to [minVal, maxVal].
+func clampInt(value, minVal, maxVal int) int {
+	if value < minVal {
+		return minVal
+	}
+	if value > maxVal {
+		return maxVal
+	}
+	return value
 }
 
 // getFieldsForRow extracts the slice of fieldInfo for the given row.

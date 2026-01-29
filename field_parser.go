@@ -294,12 +294,20 @@ func processChunkMasks(
 	state *parserState, result *parseResult,
 	rowFirstField, lineNum *int,
 ) {
-	for {
-		combined := sepMask | nlMask | quoteMask
-		if combined == 0 {
-			return
-		}
+	combined := sepMask | nlMask | quoteMask
+	if combined == 0 {
+		return
+	}
 
+	// Fast path: no quotes in this chunk and not inside a quoted field.
+	// Avoids quote-related event classification overhead.
+	if quoteMask == 0 && !state.quoted {
+		processChunkMasksNoQuotes(buf, offset, sepMask, nlMask, state, result, rowFirstField, lineNum)
+		return
+	}
+
+	// Standard path: process all structural characters in position order
+	for combined != 0 {
 		pos := bits.TrailingZeros64(combined)
 		bit := uint64(1) << pos
 		absPos := offset + uint64(pos)
@@ -318,6 +326,36 @@ func processChunkMasks(
 			handleNewlineEvent(buf, absPos, state, result, rowFirstField, lineNum)
 			nlMask &^= bit
 		}
+
+		combined = sepMask | nlMask | quoteMask
+	}
+}
+
+// processChunkMasksNoQuotes is a fast path for chunks without quotes.
+// Avoids quote-related checks and event classification overhead.
+func processChunkMasksNoQuotes(
+	buf []byte, offset uint64,
+	sepMask, nlMask uint64,
+	state *parserState, result *parseResult,
+	rowFirstField, lineNum *int,
+) {
+	combined := sepMask | nlMask
+	for combined != 0 {
+		pos := bits.TrailingZeros64(combined)
+		bit := uint64(1) << pos
+		absPos := offset + uint64(pos)
+
+		if sepMask&bit != 0 {
+			// Separator - always record field (not quoted)
+			recordField(buf, absPos, state, result, false)
+			sepMask &^= bit
+		} else {
+			// Newline - record field and row
+			handleNewlineEvent(buf, absPos, state, result, rowFirstField, lineNum)
+			nlMask &^= bit
+		}
+
+		combined = sepMask | nlMask
 	}
 }
 
