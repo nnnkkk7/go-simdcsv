@@ -101,6 +101,8 @@ var scanResultPool = sync.Pool{
 }
 
 // scanResultLargeCache retains a single large scanResult across GC cycles.
+// This prevents repeated large allocations when processing files > 1MB,
+// as sync.Pool may evict large objects during GC.
 var scanResultLargeCache struct {
 	mu sync.Mutex
 	sr *scanResult
@@ -123,20 +125,28 @@ func (sr *scanResult) reset() {
 }
 
 // releaseScanResult returns a scanResult to the pool for reuse.
+// Large results (>= scanResultLargeThreshold) are cached separately to survive GC.
 func releaseScanResult(sr *scanResult) {
-	if sr != nil {
-		sr.reset()
-		if cap(sr.quoteMasks) >= scanResultLargeThreshold {
-			scanResultLargeCache.mu.Lock()
-			if scanResultLargeCache.sr == nil || cap(scanResultLargeCache.sr.quoteMasks) < cap(sr.quoteMasks) {
-				scanResultLargeCache.sr = sr
-				scanResultLargeCache.mu.Unlock()
-				return
-			}
-			scanResultLargeCache.mu.Unlock()
-		}
-		scanResultPool.Put(sr)
+	if sr == nil {
+		return
 	}
+
+	sr.reset()
+
+	// Cache large results separately to prevent GC eviction
+	if cap(sr.quoteMasks) >= scanResultLargeThreshold {
+		scanResultLargeCache.mu.Lock()
+		shouldCache := scanResultLargeCache.sr == nil ||
+			cap(scanResultLargeCache.sr.quoteMasks) < cap(sr.quoteMasks)
+		if shouldCache {
+			scanResultLargeCache.sr = sr
+			scanResultLargeCache.mu.Unlock()
+			return
+		}
+		scanResultLargeCache.mu.Unlock()
+	}
+
+	scanResultPool.Put(sr)
 }
 
 // =============================================================================

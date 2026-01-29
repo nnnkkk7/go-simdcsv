@@ -97,19 +97,23 @@ func buildRecords(buf []byte, pr *parseResult, hasCR bool) [][]string {
 }
 
 // buildRecordZeroCopy creates a record with zero-copy strings from buf.
-// Only safe when no transformation (unescape/CRLF) is needed.
+// Safety: Only call when no transformation (unescape/CRLF) is needed.
+// The returned strings reference buf directly, so buf must outlive the record.
 func buildRecordZeroCopy(buf []byte, pr *parseResult, row rowInfo) []string {
 	if row.fieldCount == 0 {
 		return nil
 	}
+
 	record := make([]string, row.fieldCount)
 	bufLen := uint32(len(buf))
-	for i := 0; i < row.fieldCount; i++ {
-		fieldIdx := row.firstField + i
-		if fieldIdx >= len(pr.fields) {
-			break
-		}
-		field := pr.fields[fieldIdx]
+
+	endIdx := row.firstField + row.fieldCount
+	if endIdx > len(pr.fields) {
+		endIdx = len(pr.fields)
+	}
+	fields := pr.fields[row.firstField:endIdx]
+
+	for i, field := range fields {
 		if field.length == 0 {
 			continue
 		}

@@ -2,6 +2,8 @@
 
 package simdcsv
 
+import "bytes"
+
 // =============================================================================
 // Validation Policy - Configurable behavior decisions
 // =============================================================================
@@ -164,22 +166,12 @@ func (r *Reader) validateQuotedField(raw []byte, rawStart uint64, lineNum int) e
 // validateUnquotedField validates a field that does not start with a quote.
 // Reports ErrBareQuote if quotes appear in unquoted fields.
 func (r *Reader) validateUnquotedField(raw []byte, rawStart uint64, lineNum int) error {
-	quotePos := findBareQuote(raw)
+	quotePos := bytes.IndexByte(raw, '"')
 	if quotePos == -1 {
 		return nil
 	}
 	col := int(rawStart) + quotePos + 1 //nolint:gosec // G115
 	return &ParseError{StartLine: lineNum, Line: lineNum, Column: col, Err: ErrBareQuote}
-}
-
-// findBareQuote returns the index of the first quote in data, or -1 if none found.
-func findBareQuote(data []byte) int {
-	for i, b := range data {
-		if b == '"' {
-			return i
-		}
-	}
-	return -1
 }
 
 // =============================================================================
