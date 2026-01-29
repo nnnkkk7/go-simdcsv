@@ -203,7 +203,23 @@ func estimateCounts(bufLen int, sr *scanResult) (estimatedFields, estimatedRows 
 }
 
 // ensureResultCapacity ensures result slices have sufficient capacity.
+// Uses scan counts for accurate pre-allocation when available.
 func ensureResultCapacity(result *parseResult, bufLen int, sr *scanResult) {
+	// Use exact counts from scan when available (most accurate)
+	if sr != nil && sr.separatorCount > 0 {
+		estimatedFields := sr.separatorCount + sr.newlineCount + 1
+		estimatedRows := sr.newlineCount + 1
+
+		if cap(result.fields) < estimatedFields {
+			result.fields = make([]fieldInfo, 0, estimatedFields)
+		}
+		if cap(result.rows) < estimatedRows {
+			result.rows = make([]rowInfo, 0, estimatedRows)
+		}
+		return
+	}
+
+	// Fallback: conservative estimate from buffer size
 	estimatedFields, estimatedRows := estimateCounts(bufLen, sr)
 
 	if cap(result.fields) < estimatedFields {

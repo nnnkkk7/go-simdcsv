@@ -3,7 +3,10 @@
 //nolint:gosec // G115: Integer conversions are safe - buffer size bounded by DefaultMaxInputSize (2GB)
 package simdcsv
 
-import "bytes"
+import (
+	"bytes"
+	"unsafe"
+)
 
 // Buffer allocation constants for reducing reallocations in hot path.
 const (
@@ -30,9 +33,26 @@ const (
 // This matches encoding/csv behavior and allows callers to recover partial data.
 func (r *Reader) buildRecordWithValidation(row rowInfo, rowIdx int) ([]string, error) {
 	fieldCount := row.fieldCount
-	r.prepareBuffers(row, fieldCount)
-
 	fields := r.getFieldsForRow(row, fieldCount)
+
+	// Fast path: check if any field needs transformation
+	needsTransform := r.state.hasCR
+	if !needsTransform {
+		for _, field := range fields {
+			if field.needsUnescape() {
+				needsTransform = true
+				break
+			}
+		}
+	}
+
+	// Fast path: zero-copy when no transformation needed (but still validate)
+	if !needsTransform && !r.TrimLeadingSpace {
+		return r.buildRecordWithValidationZeroCopy(row, fields)
+	}
+
+	// Standard path with transformation
+	r.prepareBuffers(row, fieldCount)
 
 	for i, field := range fields {
 		if err := r.validateFieldIfNeeded(field, row.lineNum); err != nil {
@@ -45,8 +65,39 @@ func (r *Reader) buildRecordWithValidation(row rowInfo, rowIdx int) ([]string, e
 	return r.buildFinalRecord(fieldCount), nil
 }
 
+// buildRecordWithValidationZeroCopy builds a record with zero-copy strings while still validating.
+func (r *Reader) buildRecordWithValidationZeroCopy(row rowInfo, fields []fieldInfo) ([]string, error) {
+	fieldCount := row.fieldCount
+	record := r.allocateRecord(fieldCount)
+	r.state.fieldPositions = r.ensureFieldPositionsCapacity(fieldCount)
+
+	buf := r.state.rawBuffer
+	bufLen := uint32(len(buf))
+
+	for i, field := range fields {
+		// Validate even in zero-copy path
+		if err := r.validateFieldIfNeeded(field, row.lineNum); err != nil {
+			return record[:i], err
+		}
+
+		start := field.start
+		end := start + field.length
+		if start >= bufLen {
+			record[i] = ""
+		} else {
+			if end > bufLen {
+				end = bufLen
+			}
+			// Zero-copy string from rawBuffer
+			record[i] = unsafe.String(&buf[start], int(end-start))
+		}
+		r.state.fieldPositions[i] = position{line: row.lineNum, column: int(field.rawStart()) + 1}
+	}
+	return record, nil
+}
+
 // buildRecordNoQuotes builds a record when the input contains no quotes.
-// It avoids the recordBuffer copy path and mirrors appendSimpleContent behavior.
+// Uses a single row string to avoid per-field allocations.
 func (r *Reader) buildRecordNoQuotes(row rowInfo) []string {
 	fieldCount := row.fieldCount
 	record := r.allocateRecord(fieldCount)
@@ -56,25 +107,74 @@ func (r *Reader) buildRecordNoQuotes(row rowInfo) []string {
 	buf := r.state.rawBuffer
 	bufLen := uint32(len(buf))
 
+	if len(fields) == 0 {
+		return record
+	}
+
+	rowStart := fields[0].rawStart()
+	rowEnd := fields[len(fields)-1].rawEnd()
+	if rowStart >= bufLen {
+		for i, field := range fields {
+			record[i] = ""
+			r.state.fieldPositions[i] = position{line: row.lineNum, column: int(field.rawStart()) + 1}
+		}
+		return record
+	}
+	if rowEnd > bufLen {
+		rowEnd = bufLen
+	}
+	if rowEnd < rowStart {
+		rowEnd = rowStart
+	}
+
+	var rowStr string
+	if r.TrimLeadingSpace {
+		rowStr = string(buf[rowStart:rowEnd])
+	} else {
+		// Zero-copy string from rawBuffer - safe because rawBuffer outlives record.
+		rowStr = unsafe.String(&buf[rowStart], int(rowEnd-rowStart))
+	}
+	rowStrLen := len(rowStr)
+
 	for i, field := range fields {
 		start := field.start
 		end := start + field.length
-		if start >= bufLen {
-			record[i] = ""
-			r.state.fieldPositions[i] = position{line: row.lineNum, column: int(start) + 1}
-			continue
-		}
-		if end > bufLen {
-			end = bufLen
+		rawStart := field.rawStart()
+
+		if start < bufLen {
+			if end > bufLen {
+				end = bufLen
+			}
+			if r.TrimLeadingSpace && start < end {
+				for start < end && (buf[start] == ' ' || buf[start] == '\t') {
+					start++
+				}
+			}
 		}
 
-		content := buf[start:end]
-		if r.TrimLeadingSpace {
-			content = trimLeftBytes(content)
+		if start < rowStart {
+			start = rowStart
+		}
+		if end < start {
+			end = start
+		}
+		relStart := int(start - rowStart)
+		relEnd := int(end - rowStart)
+		if relStart < 0 {
+			relStart = 0
+		}
+		if relStart > rowStrLen {
+			relStart = rowStrLen
+		}
+		if relEnd < relStart {
+			relEnd = relStart
+		}
+		if relEnd > rowStrLen {
+			relEnd = rowStrLen
 		}
 
-		record[i] = string(content)
-		r.state.fieldPositions[i] = position{line: row.lineNum, column: int(start) + 1}
+		record[i] = rowStr[relStart:relEnd]
+		r.state.fieldPositions[i] = position{line: row.lineNum, column: int(rawStart) + 1}
 	}
 	return record
 }
