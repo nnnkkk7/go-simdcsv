@@ -103,12 +103,14 @@ func (pr *parseResult) reset() {
 	pr.rows = pr.rows[:0]
 }
 
-// releaseParseResult returns a parseResult to the pool for reuse.
-func releaseParseResult(pr *parseResult) {
-	if pr != nil {
-		pr.reset()
-		parseResultPool.Put(pr)
+// release returns the parseResult to the pool for reuse.
+func (pr *parseResult) release() {
+	if pr == nil {
+		return
 	}
+
+	pr.reset()
+	parseResultPool.Put(pr)
 }
 
 // =============================================================================
