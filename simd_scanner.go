@@ -21,30 +21,34 @@ func bytesToInt8Slice(b []byte) []int8 {
 // useAVX512 indicates whether AVX-512 instructions are available at runtime.
 var useAVX512 bool
 
-// Cached broadcast values for fixed characters (initialized in init()).
+// Cached broadcast values for fixed characters and separators (initialized in init()).
 var (
 	// AVX-512 (64-byte) cached values
 	cachedQuoteCmp archsimd.Int8x64
 	cachedCrCmp    archsimd.Int8x64
 	cachedNlCmp    archsimd.Int8x64
+	cachedSepCmp   [cachedSepCmpCount]archsimd.Int8x64
 )
 
 // SIMD processing constants.
 const (
-	simdChunkSize       = 64 // bytes per AVX-512 iteration
-	simdHalfChunk       = 32 // bytes for half chunk (AVX2 size)
-	simdMinThreshold    = 32 // minimum size for SIMD benefit
-	avgFieldLenEstimate = 15 // estimated avg field length for preallocation
-	avgRowLenEstimate   = 80 // estimated avg row length for preallocation
-)
+	simdChunkSize       = 64  // bytes per AVX-512 iteration
+	simdHalfChunk       = 32  // bytes for half chunk (AVX2 size)
+	simdMinThreshold    = 32  // minimum size for SIMD benefit
+	avgFieldLenEstimate = 15  // estimated avg field length for preallocation
+	avgRowLenEstimate   = 80  // estimated avg row length for preallocation
+	cachedSepCmpCount   = 256 // number of cached separator broadcast values
 
 func init() {
 	useAVX512 = archsimd.X86.AVX512()
 	if useAVX512 {
-		// Pre-broadcast fixed characters to avoid repeated BroadcastInt8x64 calls
-		cachedQuoteCmp = archsimd.BroadcastInt8x64('"')
-		cachedCrCmp = archsimd.BroadcastInt8x64('\r')
-		cachedNlCmp = archsimd.BroadcastInt8x64('\n')
+		// Pre-broadcast all byte values to avoid repeated BroadcastInt8x64 calls
+		for i := 0; i < cachedSepCmpCount; i++ {
+			cachedSepCmp[i] = archsimd.BroadcastInt8x64(int8(i))
+		}
+		cachedQuoteCmp = cachedSepCmp['"']
+		cachedCrCmp = cachedSepCmp['\r']
+		cachedNlCmp = cachedSepCmp['\n']
 	}
 }
 
@@ -220,8 +224,7 @@ func generateMasksScalar(data []byte, separator byte) (quote, sep, cr, nl uint64
 // Uses cached broadcast values for fixed characters (quote, CR, NL) to avoid
 // repeated BroadcastInt8x64 calls.
 func generateMasksAVX512(data []byte, separator byte) (quote, sep, cr, nl uint64) {
-	sepCmp := archsimd.BroadcastInt8x64(int8(separator))
-	return generateMasksAVX512WithCmp(data, cachedQuoteCmp, sepCmp, cachedCrCmp, cachedNlCmp)
+	return generateMasksAVX512WithCmp(data, cachedQuoteCmp, cachedSepCmp[separator], cachedCrCmp, cachedNlCmp)
 }
 
 // generateMasksAVX512WithCmp generates masks reusing pre-broadcasted comparators.
@@ -460,7 +463,7 @@ type avx512MaskGenerator struct {
 func newAVX512MaskGenerator(separator byte) *avx512MaskGenerator {
 	return &avx512MaskGenerator{
 		quoteCmp: cachedQuoteCmp,
-		sepCmp:   archsimd.BroadcastInt8x64(int8(separator)),
+		sepCmp:   cachedSepCmp[separator],
 		crCmp:    cachedCrCmp,
 		nlCmp:    cachedNlCmp,
 	}
