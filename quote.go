@@ -97,7 +97,7 @@ func findClosingQuoteScalar(data []byte, startAfterOpenQuote int) int {
 
 // findClosingQuoteSIMD uses AVX-512 to find the closing quote in simdHalfChunk-byte chunks.
 func findClosingQuoteSIMD(data []byte, startAfterOpenQuote int) int {
-	quoteCmp := archsimd.BroadcastInt8x32('"')
+	quoteCmp := cachedQuoteCmp32
 	int8Data := bytesToInt8Slice(data)
 	i := startAfterOpenQuote
 
