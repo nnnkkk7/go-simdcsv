@@ -21,8 +21,8 @@ func ParseBytes(data []byte, comma rune) ([][]string, error) {
 	pr := parseBuffer(data, sr)
 	records := buildRecords(data, pr, sr.hasCR)
 
-	releaseParseResult(pr)
-	releaseScanResult(sr)
+	pr.release()
+	sr.release()
 
 	return records, nil
 }
@@ -37,8 +37,8 @@ func ParseBytesStreaming(data []byte, comma rune, callback func([]string) error)
 	separator := byte(comma)
 	sr := scanBuffer(data, separator)
 	pr := parseBuffer(data, sr)
-	defer releaseParseResult(pr)
-	defer releaseScanResult(sr)
+	defer pr.release()
+	defer sr.release()
 
 	if pr == nil || len(pr.rows) == 0 {
 		return nil

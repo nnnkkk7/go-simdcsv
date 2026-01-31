@@ -362,7 +362,7 @@ func (r *Reader) initialize() error {
 	r.state.parseResult = parseBuffer(r.state.rawBuffer, r.state.scanResult)
 
 	// Release scanResult (no longer needed after parsing)
-	releaseScanResult(r.state.scanResult)
+	r.state.scanResult.release()
 	r.state.scanResult = nil
 
 	r.state.offset = int64(len(r.state.rawBuffer))
