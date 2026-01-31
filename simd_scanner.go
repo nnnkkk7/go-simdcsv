@@ -38,6 +38,7 @@ const (
 	avgFieldLenEstimate = 15  // estimated avg field length for preallocation
 	avgRowLenEstimate   = 80  // estimated avg row length for preallocation
 	cachedSepCmpCount   = 256 // number of cached separator broadcast values
+)
 
 func init() {
 	useAVX512 = archsimd.X86.AVX512()
