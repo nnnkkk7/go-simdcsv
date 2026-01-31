@@ -11,6 +11,23 @@ import (
 	"simd/archsimd"
 )
 
+// Cached broadcast values for fixed characters used in Writer (initialized in init()).
+var (
+	cachedQuoteCmp32 archsimd.Int8x32
+	cachedCrCmp32    archsimd.Int8x32
+	cachedNlCmp32    archsimd.Int8x32
+)
+
+func init() {
+	if useAVX512 {
+		// Pre-broadcast fixed characters for AVX2 (32-byte) operations to avoid
+		// repeated BroadcastInt8x32 calls in Writer methods.
+		cachedQuoteCmp32 = archsimd.BroadcastInt8x32('"')
+		cachedCrCmp32 = archsimd.BroadcastInt8x32('\r')
+		cachedNlCmp32 = archsimd.BroadcastInt8x32('\n')
+	}
+}
+
 // Writer writes records using CSV encoding.
 //
 // Records are terminated by a newline and use ',' as the field delimiter by default.

@@ -27,10 +27,6 @@ var (
 	cachedQuoteCmp archsimd.Int8x64
 	cachedCrCmp    archsimd.Int8x64
 	cachedNlCmp    archsimd.Int8x64
-	// AVX2 (32-byte) cached values
-	cachedQuoteCmp32 archsimd.Int8x32
-	cachedCrCmp32    archsimd.Int8x32
-	cachedNlCmp32    archsimd.Int8x32
 )
 
 // SIMD processing constants.
@@ -49,10 +45,6 @@ func init() {
 		cachedQuoteCmp = archsimd.BroadcastInt8x64('"')
 		cachedCrCmp = archsimd.BroadcastInt8x64('\r')
 		cachedNlCmp = archsimd.BroadcastInt8x64('\n')
-		// Pre-broadcast fixed characters for AVX2 (32-byte) operations
-		cachedQuoteCmp32 = archsimd.BroadcastInt8x32('"')
-		cachedCrCmp32 = archsimd.BroadcastInt8x32('\r')
-		cachedNlCmp32 = archsimd.BroadcastInt8x32('\n')
 	}
 }
 
