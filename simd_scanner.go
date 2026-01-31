@@ -45,6 +45,7 @@ func init() {
 	if useAVX512 {
 		// Pre-broadcast all byte values to avoid repeated BroadcastInt8x64 calls
 		for i := 0; i < cachedSepCmpCount; i++ {
+			// #nosec G115 -- i is bounded [0,255], intentional two's-complement mapping.
 			cachedSepCmp[i] = archsimd.BroadcastInt8x64(int8(i))
 		}
 		cachedQuoteCmp = cachedSepCmp['"']
