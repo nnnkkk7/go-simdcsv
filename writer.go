@@ -123,14 +123,16 @@ func (w *Writer) fieldNeedsQuotesScalar(field string) bool {
 }
 
 // fieldNeedsQuotesSIMD uses SIMD to detect special characters requiring quoting.
+// Uses cached broadcast values for fixed characters (quote, CR, NL) to avoid
+// repeated BroadcastInt8x32 calls.
 func (w *Writer) fieldNeedsQuotesSIMD(field string) bool {
 	data := unsafe.Slice(unsafe.StringData(field), len(field))
 	int8Data := bytesToInt8Slice(data)
 
 	commaCmp := archsimd.BroadcastInt8x32(int8(w.Comma))
-	newlineCmp := archsimd.BroadcastInt8x32('\n')
-	carriageReturnCmp := archsimd.BroadcastInt8x32('\r')
-	quoteCmp := archsimd.BroadcastInt8x32('"')
+	newlineCmp := cachedNlCmp32
+	carriageReturnCmp := cachedCrCmp32
+	quoteCmp := cachedQuoteCmp32
 
 	// Process 32-byte chunks
 	offset := 0
@@ -186,10 +188,11 @@ func (w *Writer) writeQuotedFieldScalar(field string) error {
 }
 
 // writeQuotedFieldSIMD escapes quotes using SIMD to find quote positions.
+// Uses cached broadcast value for quote character to avoid repeated BroadcastInt8x32 calls.
 func (w *Writer) writeQuotedFieldSIMD(field string) error {
 	data := unsafe.Slice(unsafe.StringData(field), len(field))
 	int8Data := bytesToInt8Slice(data)
-	quoteCmp := archsimd.BroadcastInt8x32('"')
+	quoteCmp := cachedQuoteCmp32
 
 	offset := 0
 	lastWritten := 0
