@@ -5,7 +5,9 @@ package simdcsv
 import (
 	"bytes"
 	"encoding/csv"
+	"fmt"
 	"io"
+	"strings"
 	"testing"
 )
 
@@ -272,5 +274,192 @@ func BenchmarkParseBytes_EscapedQuotes_10K(b *testing.B) {
 	b.SetBytes(int64(len(data)))
 	for b.Loop() {
 		_, _ = ParseBytes(data, ',')
+	}
+}
+
+// =============================================================================
+// findClosingQuote Benchmarks
+// =============================================================================
+
+func BenchmarkFindClosingQuote_Short(b *testing.B) {
+	input := []byte(`"hello world"`)
+	for b.Loop() {
+		findClosingQuote(input, 1)
+	}
+}
+
+func BenchmarkFindClosingQuote_Long(b *testing.B) {
+	input := []byte(`"` + strings.Repeat("abcdefgh", 100) + `"`)
+	for b.Loop() {
+		findClosingQuote(input, 1)
+	}
+}
+
+func BenchmarkFindClosingQuote_LongScalar(b *testing.B) {
+	input := []byte(`"` + strings.Repeat("abcdefgh", 100) + `"`)
+	for b.Loop() {
+		findClosingQuoteScalar(input, 1)
+	}
+}
+
+func BenchmarkFindClosingQuote_LongWithEscapes(b *testing.B) {
+	input := []byte(`"` + strings.Repeat(`a""b`, 50) + `"`)
+	for b.Loop() {
+		findClosingQuote(input, 1)
+	}
+}
+
+// =============================================================================
+// fieldNeedsQuotes Benchmarks
+// =============================================================================
+
+func BenchmarkFieldNeedsQuotes_Short(b *testing.B) {
+	w := NewWriter(nil)
+	field := "hello,world"
+	for b.Loop() {
+		w.fieldNeedsQuotes(field)
+	}
+}
+
+func BenchmarkFieldNeedsQuotes_Long(b *testing.B) {
+	w := NewWriter(nil)
+	field := strings.Repeat("abcdefgh", 100)
+	for b.Loop() {
+		w.fieldNeedsQuotes(field)
+	}
+}
+
+func BenchmarkFieldNeedsQuotes_LongScalar(b *testing.B) {
+	w := NewWriter(nil)
+	field := strings.Repeat("abcdefgh", 100)
+	for b.Loop() {
+		w.fieldNeedsQuotesScalar(field)
+	}
+}
+
+func BenchmarkFieldNeedsQuotes_LongWithSpecial(b *testing.B) {
+	w := NewWriter(nil)
+	field := strings.Repeat("abcdefgh", 100) + ","
+	for b.Loop() {
+		w.fieldNeedsQuotes(field)
+	}
+}
+
+func BenchmarkWriteQuotedField_Long(b *testing.B) {
+	field := strings.Repeat("a", 50) + `"` + strings.Repeat("b", 50)
+	for b.Loop() {
+		var buf bytes.Buffer
+		w := NewWriter(&buf)
+		_ = w.Write([]string{field})
+		_ = w.Flush()
+	}
+}
+
+// =============================================================================
+// scanBuffer Benchmarks
+// =============================================================================
+
+func BenchmarkGenerateMasks(b *testing.B) {
+	data := make([]byte, 64)
+	copy(data, []byte(`"field1","field2","field3","field4","field5","field6","fie"`))
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		generateMasks(data, ',')
+	}
+}
+
+func BenchmarkGenerateMasksPadded(b *testing.B) {
+	sizes := []int{1, 16, 32, 48, 63}
+
+	for _, size := range sizes {
+		b.Run(fmt.Sprintf("size_%d", size), func(b *testing.B) {
+			data := make([]byte, size)
+			for i := range data {
+				if i%2 == 0 {
+					data[i] = ','
+				} else {
+					data[i] = 'a'
+				}
+			}
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				generateMasksPadded(data, ',')
+			}
+		})
+	}
+}
+
+func BenchmarkScanBuffer(b *testing.B) {
+	sizes := []int{64, 1024, 64 * 1024, 1024 * 1024}
+
+	for _, size := range sizes {
+		b.Run(fmt.Sprintf("size_%d", size), func(b *testing.B) {
+			// Create realistic CSV-like data
+			data := make([]byte, size)
+			for i := range data {
+				switch i % 10 {
+				case 3, 7:
+					data[i] = ','
+				case 9:
+					data[i] = '\n'
+				default:
+					data[i] = 'a' + byte(i%26)
+				}
+			}
+
+			b.ResetTimer()
+			b.SetBytes(int64(size))
+			for i := 0; i < b.N; i++ {
+				scanBuffer(data, ',')
+			}
+		})
+	}
+}
+
+// =============================================================================
+// parseBuffer Benchmarks
+// =============================================================================
+
+func BenchmarkParseBuffer(b *testing.B) {
+	// Generate test data: 10000 rows of "field1,field2,field3\n"
+	numRows := 10000
+	var data []byte
+	for i := 0; i < numRows; i++ {
+		data = append(data, []byte("field1,field2,field3\n")...)
+	}
+
+	// Pre-compute masks
+	chunkCount := (len(data) + 63) / 64
+	sepMasks := make([]uint64, chunkCount)
+	nlMasks := make([]uint64, chunkCount)
+
+	for i := 0; i < len(data); i++ {
+		chunkIdx := i / 64
+		bitPos := i % 64
+		if data[i] == ',' {
+			sepMasks[chunkIdx] |= 1 << bitPos
+		} else if data[i] == '\n' {
+			nlMasks[chunkIdx] |= 1 << bitPos
+		}
+	}
+
+	sr := &scanResult{
+		quoteMasks:     make([]uint64, chunkCount),
+		separatorMasks: sepMasks,
+		newlineMasks:   nlMasks,
+		chunkCount:     chunkCount,
+		lastChunkBits:  len(data) % 64,
+	}
+	if sr.lastChunkBits == 0 {
+		sr.lastChunkBits = 64
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		_ = parseBuffer(data, sr)
 	}
 }
