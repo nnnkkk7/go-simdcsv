@@ -1,5 +1,13 @@
 # Changelog
 
+## [v0.0.14](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.13...v0.0.14) - 2026-02-02
+- refactor: optimize chunk processing and introduce fast path for no-quote scenarios by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/65
+- docs: update readme by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/67
+- refactor: use cached values by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/68
+- refactor: enhance SIMD processing by adding cached separator values by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/69
+- refactor: update SIMD processing to use 64-byte chunks by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/70
+- test: tweak benchamark tests by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/71
+
 ## [v0.0.13](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.12...v0.0.13) - 2026-01-29
 - chore: update CPU feature detection to use archsimd package by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/60
 - perf: optimize SIMD mask processing with prefix XOR by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/62
