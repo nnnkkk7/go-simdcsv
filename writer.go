@@ -11,23 +11,6 @@ import (
 	"simd/archsimd"
 )
 
-// Cached broadcast values for fixed characters used in Writer (initialized in init()).
-var (
-	cachedQuoteCmp32 archsimd.Int8x32
-	cachedCrCmp32    archsimd.Int8x32
-	cachedNlCmp32    archsimd.Int8x32
-)
-
-func init() {
-	if useAVX512 {
-		// Pre-broadcast fixed characters for AVX2 (32-byte) operations to avoid
-		// repeated BroadcastInt8x32 calls in Writer methods.
-		cachedQuoteCmp32 = archsimd.BroadcastInt8x32('"')
-		cachedCrCmp32 = archsimd.BroadcastInt8x32('\r')
-		cachedNlCmp32 = archsimd.BroadcastInt8x32('\n')
-	}
-}
-
 // Writer writes records using CSV encoding.
 //
 // Records are terminated by a newline and use ',' as the field delimiter by default.
@@ -123,7 +106,7 @@ func (w *Writer) fieldNeedsQuotes(field string) bool {
 		return true
 	}
 	// Use SIMD for ASCII delimiters and fields meeting size threshold
-	if shouldUseSIMD(len(field)) && w.Comma < 128 {
+	if shouldUseSIMD(len(field)) && w.Comma >= 0 && w.Comma < 128 {
 		return w.fieldNeedsQuotesSIMD(field)
 	}
 	return w.fieldNeedsQuotesScalar(field)
@@ -139,35 +122,30 @@ func (w *Writer) fieldNeedsQuotesScalar(field string) bool {
 	return false
 }
 
-// fieldNeedsQuotesSIMD uses SIMD to detect special characters requiring quoting.
-// Uses cached broadcast values for fixed characters (quote, CR, NL) to avoid
-// repeated BroadcastInt8x32 calls.
+// fieldNeedsQuotesSIMD uses AVX-512 SIMD to detect special characters requiring quoting.
 func (w *Writer) fieldNeedsQuotesSIMD(field string) bool {
 	data := unsafe.Slice(unsafe.StringData(field), len(field))
 	int8Data := bytesToInt8Slice(data)
 
-	commaCmp := archsimd.BroadcastInt8x32(int8(w.Comma))
-	newlineCmp := cachedNlCmp32
-	carriageReturnCmp := cachedCrCmp32
-	quoteCmp := cachedQuoteCmp32
+	commaCmp := cachedSepCmp[w.Comma]
 
-	// Process 32-byte chunks
+	// Process 64-byte chunks using AVX-512
 	offset := 0
-	for offset+32 <= len(data) {
-		chunk := archsimd.LoadInt8x32Slice(int8Data[offset : offset+32])
+	for offset+simdChunkSize <= len(data) {
+		chunk := archsimd.LoadInt8x64Slice(int8Data[offset : offset+simdChunkSize])
 
 		commaMask := chunk.Equal(commaCmp).ToBits()
-		newlineMask := chunk.Equal(newlineCmp).ToBits()
-		carriageReturnMask := chunk.Equal(carriageReturnCmp).ToBits()
-		quoteMask := chunk.Equal(quoteCmp).ToBits()
+		newlineMask := chunk.Equal(cachedNlCmp).ToBits()
+		crMask := chunk.Equal(cachedCrCmp).ToBits()
+		quoteMask := chunk.Equal(cachedQuoteCmp).ToBits()
 
-		if commaMask|newlineMask|carriageReturnMask|quoteMask != 0 {
+		if commaMask|newlineMask|crMask|quoteMask != 0 {
 			return true
 		}
-		offset += 32
+		offset += simdChunkSize
 	}
 
-	// Process remaining bytes (< 32 bytes, scalar is sufficient)
+	// Process remaining bytes (< 64 bytes, scalar is sufficient)
 	for ; offset < len(data); offset++ {
 		c := data[offset]
 		if c == byte(w.Comma) || c == '\n' || c == '\r' || c == '"' {
@@ -204,23 +182,21 @@ func (w *Writer) writeQuotedFieldScalar(field string) error {
 	return w.w.WriteByte('"')
 }
 
-// writeQuotedFieldSIMD escapes quotes using SIMD to find quote positions.
-// Uses cached broadcast value for quote character to avoid repeated BroadcastInt8x32 calls.
+// writeQuotedFieldSIMD escapes quotes using AVX-512 SIMD to find quote positions.
 func (w *Writer) writeQuotedFieldSIMD(field string) error {
 	data := unsafe.Slice(unsafe.StringData(field), len(field))
 	int8Data := bytesToInt8Slice(data)
-	quoteCmp := cachedQuoteCmp32
 
 	offset := 0
 	lastWritten := 0
 
-	// Process 32-byte chunks
-	for offset+32 <= len(data) {
-		chunk := archsimd.LoadInt8x32Slice(int8Data[offset : offset+32])
-		mask := chunk.Equal(quoteCmp).ToBits()
+	// Process 64-byte chunks using AVX-512
+	for offset+simdChunkSize <= len(data) {
+		chunk := archsimd.LoadInt8x64Slice(int8Data[offset : offset+simdChunkSize])
+		mask := chunk.Equal(cachedQuoteCmp).ToBits()
 
 		for mask != 0 {
-			pos := bits.TrailingZeros32(mask)
+			pos := bits.TrailingZeros64(mask)
 			quotePos := offset + pos
 
 			// Write content up to and including the quote, then add escape quote
@@ -232,12 +208,12 @@ func (w *Writer) writeQuotedFieldSIMD(field string) error {
 			}
 
 			lastWritten = quotePos + 1
-			mask &= ^(uint32(1) << pos)
+			mask &= ^(uint64(1) << pos)
 		}
-		offset += 32
+		offset += simdChunkSize
 	}
 
-	// Process remaining bytes (< 32 bytes, scalar is sufficient)
+	// Process remaining bytes (< 64 bytes, scalar is sufficient)
 	for ; offset < len(data); offset++ {
 		if data[offset] == '"' {
 			if _, err := w.w.WriteString(field[lastWritten : offset+1]); err != nil {

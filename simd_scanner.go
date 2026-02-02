@@ -33,7 +33,6 @@ var (
 // SIMD processing constants.
 const (
 	simdChunkSize       = 64  // bytes per AVX-512 iteration
-	simdHalfChunk       = 32  // bytes for half chunk (AVX2 size)
 	simdMinThreshold    = 32  // minimum size for SIMD benefit
 	avgFieldLenEstimate = 15  // estimated avg field length for preallocation
 	avgRowLenEstimate   = 80  // estimated avg row length for preallocation

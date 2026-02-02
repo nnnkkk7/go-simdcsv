@@ -95,18 +95,17 @@ func findClosingQuoteScalar(data []byte, startAfterOpenQuote int) int {
 // Closing Quote Search - SIMD Implementation
 // =============================================================================
 
-// findClosingQuoteSIMD uses AVX-512 to find the closing quote in simdHalfChunk-byte chunks.
+// findClosingQuoteSIMD uses AVX-512 to find the closing quote in 64-byte chunks.
 func findClosingQuoteSIMD(data []byte, startAfterOpenQuote int) int {
-	quoteCmp := cachedQuoteCmp32
 	int8Data := bytesToInt8Slice(data)
 	i := startAfterOpenQuote
 
-	for i+simdHalfChunk <= len(data) {
-		chunk := archsimd.LoadInt8x32Slice(int8Data[i : i+simdHalfChunk])
-		mask := chunk.Equal(quoteCmp).ToBits()
+	for i+simdChunkSize <= len(data) {
+		chunk := archsimd.LoadInt8x64Slice(int8Data[i : i+simdChunkSize])
+		mask := chunk.Equal(cachedQuoteCmp).ToBits()
 
 		if mask == 0 {
-			i += simdHalfChunk
+			i += simdChunkSize
 			continue
 		}
 
@@ -125,13 +124,13 @@ func findClosingQuoteSIMD(data []byte, startAfterOpenQuote int) int {
 
 // processQuoteMask processes quote positions in a SIMD chunk mask.
 // Returns (closingQuoteIdx, newPosition, shouldExitLoop).
-func processQuoteMask(data []byte, chunkStart int, mask uint32) (int, int, bool) {
+func processQuoteMask(data []byte, chunkStart int, mask uint64) (int, int, bool) {
 	for mask != 0 {
-		pos := bits.TrailingZeros32(mask)
+		pos := bits.TrailingZeros64(mask)
 
 		// Boundary case: quote at last position of chunk
-		if pos == simdHalfChunk-1 {
-			newPos := chunkStart + simdHalfChunk
+		if pos == simdChunkSize-1 {
+			newPos := chunkStart + simdChunkSize
 			if newPos < len(data) && data[newPos] == '"' {
 				// Boundary double quote → skip both
 				return -1, newPos + 1, false
@@ -141,10 +140,10 @@ func processQuoteMask(data []byte, chunkStart int, mask uint32) (int, int, bool)
 		}
 
 		// Check if next bit is also set (double quote "")
-		nextBit := uint32(1) << (pos + 1)
+		nextBit := uint64(1) << (pos + 1)
 		if mask&nextBit != 0 {
 			// Double quote → clear both bits and continue
-			mask &^= (uint32(1) << pos) | nextBit
+			mask &^= (uint64(1) << pos) | nextBit
 			continue
 		}
 
@@ -152,5 +151,5 @@ func processQuoteMask(data []byte, chunkStart int, mask uint32) (int, int, bool)
 		return chunkStart + pos, chunkStart, false
 	}
 
-	return -1, chunkStart + simdHalfChunk, false
+	return -1, chunkStart + simdChunkSize, false
 }
