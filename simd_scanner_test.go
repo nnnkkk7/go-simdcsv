@@ -1119,69 +1119,6 @@ func TestScanBuffer_LastChunkBits(t *testing.T) {
 }
 
 // ============================================================================
-// Benchmark tests
-// ============================================================================
-
-func BenchmarkGenerateMasks(b *testing.B) {
-	data := make([]byte, 64)
-	copy(data, []byte(`"field1","field2","field3","field4","field5","field6","fie"`))
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		generateMasks(data, ',')
-	}
-}
-
-func BenchmarkGenerateMasksPadded(b *testing.B) {
-	sizes := []int{1, 16, 32, 48, 63}
-
-	for _, size := range sizes {
-		b.Run(fmt.Sprintf("size_%d", size), func(b *testing.B) {
-			data := make([]byte, size)
-			for i := range data {
-				if i%2 == 0 {
-					data[i] = ','
-				} else {
-					data[i] = 'a'
-				}
-			}
-
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				generateMasksPadded(data, ',')
-			}
-		})
-	}
-}
-
-func BenchmarkScanBuffer(b *testing.B) {
-	sizes := []int{64, 1024, 64 * 1024, 1024 * 1024}
-
-	for _, size := range sizes {
-		b.Run(fmt.Sprintf("size_%d", size), func(b *testing.B) {
-			// Create realistic CSV-like data
-			data := make([]byte, size)
-			for i := range data {
-				switch i % 10 {
-				case 3, 7:
-					data[i] = ','
-				case 9:
-					data[i] = '\n'
-				default:
-					data[i] = 'a' + byte(i%26)
-				}
-			}
-
-			b.ResetTimer()
-			b.SetBytes(int64(size))
-			for i := 0; i < b.N; i++ {
-				scanBuffer(data, ',')
-			}
-		})
-	}
-}
-
-// ============================================================================
 // Helper functions
 // ============================================================================
 

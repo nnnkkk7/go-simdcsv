@@ -1094,52 +1094,6 @@ func TestLargeInput(t *testing.T) {
 }
 
 // =============================================================================
-// Benchmark Tests
-// =============================================================================
-
-func BenchmarkParseBuffer(b *testing.B) {
-	// Generate test data: 10000 rows of "field1,field2,field3\n"
-	numRows := 10000
-	var data []byte
-	for i := 0; i < numRows; i++ {
-		data = append(data, []byte("field1,field2,field3\n")...)
-	}
-
-	// Pre-compute masks
-	chunkCount := (len(data) + 63) / 64
-	sepMasks := make([]uint64, chunkCount)
-	nlMasks := make([]uint64, chunkCount)
-
-	for i := 0; i < len(data); i++ {
-		chunkIdx := i / 64
-		bitPos := i % 64
-		if data[i] == ',' {
-			sepMasks[chunkIdx] |= 1 << bitPos
-		} else if data[i] == '\n' {
-			nlMasks[chunkIdx] |= 1 << bitPos
-		}
-	}
-
-	sr := &scanResult{
-		quoteMasks:     make([]uint64, chunkCount),
-		separatorMasks: sepMasks,
-		newlineMasks:   nlMasks,
-		chunkCount:     chunkCount,
-		lastChunkBits:  len(data) % 64,
-	}
-	if sr.lastChunkBits == 0 {
-		sr.lastChunkBits = 64
-	}
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for i := 0; i < b.N; i++ {
-		_ = parseBuffer(data, sr)
-	}
-}
-
-// =============================================================================
 // Helper Functions
 // =============================================================================
 

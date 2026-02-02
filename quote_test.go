@@ -320,31 +320,3 @@ func TestFindClosingQuote_LargeInput(t *testing.T) {
 		})
 	}
 }
-
-func BenchmarkFindClosingQuote_Short(b *testing.B) {
-	input := []byte(`"hello world"`)
-	for b.Loop() {
-		findClosingQuote(input, 1)
-	}
-}
-
-func BenchmarkFindClosingQuote_Long(b *testing.B) {
-	input := []byte(`"` + strings.Repeat("abcdefgh", 100) + `"`)
-	for b.Loop() {
-		findClosingQuote(input, 1)
-	}
-}
-
-func BenchmarkFindClosingQuote_LongScalar(b *testing.B) {
-	input := []byte(`"` + strings.Repeat("abcdefgh", 100) + `"`)
-	for b.Loop() {
-		findClosingQuoteScalar(input, 1)
-	}
-}
-
-func BenchmarkFindClosingQuote_LongWithEscapes(b *testing.B) {
-	input := []byte(`"` + strings.Repeat(`a""b`, 50) + `"`)
-	for b.Loop() {
-		findClosingQuote(input, 1)
-	}
-}
