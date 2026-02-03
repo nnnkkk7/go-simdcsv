@@ -230,11 +230,12 @@ func (r *Reader) validateFieldIfNeeded(field fieldInfo, lineNum int) error {
 		return nil
 	}
 
-	rawStart, rawEnd := uint64(field.rawStart()), uint64(field.rawEnd())
-	if !r.fieldMayContainQuote(rawStart, rawEnd) {
+	// Fast path: field doesn't contain any quotes (set during parsing)
+	if !field.containsQuote() {
 		return nil
 	}
 
+	rawStart, rawEnd := uint64(field.rawStart()), uint64(field.rawEnd())
 	return r.validateFieldQuotesWithField(field, rawStart, rawEnd, lineNum)
 }
 
