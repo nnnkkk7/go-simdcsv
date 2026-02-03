@@ -77,7 +77,7 @@ func shouldUseSIMD(dataLen int) bool {
 // Prefix XOR (Quote Region Mask Computation)
 // =============================================================================
 
-// prefixXOR computes the prefix XOR of the input mask using PCLMULQDQ instruction.
+// prefixXOR computes the prefix XOR of the input mask.
 // For each bit position i, the result bit is the XOR of bits 0 through i.
 //
 // This is used to convert a quote position mask into an "inside quotes" mask:
@@ -85,25 +85,28 @@ func shouldUseSIMD(dataLen int) bool {
 //	input:  0b01001010 (quote positions at 1, 3, 6)
 //	output: 0b11000110 (inside quote regions)
 //
+// When AVX-512 is available, uses PCLMULQDQ instruction for ~3x speedup.
 // Mathematical basis (carryless multiplication in GF(2)):
 //
 //	mask × all_ones = mask × (1 + 2 + 4 + ... + 2^63)
 //	                = mask ^ (mask << 1) ^ (mask << 2) ^ ... ^ (mask << 63)
 //
 // The lower 64 bits of this product give us the prefix XOR.
-//
-// Asm: VPCLMULQDQ, CPU Feature: AVX + PCLMULQDQ
 func prefixXOR(mask uint64) uint64 {
-	// Load mask into lower 64 bits of Uint64x2
-	maskVec := archsimd.LoadUint64x2(&[2]uint64{mask, 0})
-
-	// Carryless multiply: mask × all-ones
-	// a=0: use lower 64 bits of maskVec
-	// b=0: use lower 64 bits of cachedAllOnes
-	result := maskVec.CarrylessMultiply(0, 0, cachedAllOnes)
-
-	// Lower 64 bits contain the prefix XOR result
-	return result.GetElem(0)
+	if useAVX512 {
+		// PCLMULQDQ path: ~3-4 instructions
+		maskVec := archsimd.LoadUint64x2(&[2]uint64{mask, 0})
+		result := maskVec.CarrylessMultiply(0, 0, cachedAllOnes)
+		return result.GetElem(0)
+	}
+	// Scalar path: 6 shifts + 6 XORs = 12 instructions
+	mask ^= mask << 1
+	mask ^= mask << 2
+	mask ^= mask << 4
+	mask ^= mask << 8
+	mask ^= mask << 16
+	mask ^= mask << 32
+	return mask
 }
 
 // =============================================================================
