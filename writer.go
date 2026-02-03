@@ -96,9 +96,12 @@ func (w *Writer) Error() error {
 	return w.err
 }
 
-// writerSIMDMinSize is the minimum field size for SIMD benefit in Writer.
-// Smaller than the general simdMinThreshold because we use padded operations.
-const writerSIMDMinSize = 8
+// writerSIMDMinSize is the minimum field size for SIMD benefit in writeQuotedField.
+const writerSIMDMinSize = 16
+
+// writerSIMDCheckThreshold is the minimum size for SIMD benefit in fieldNeedsQuotes.
+// Higher than writerSIMDMinSize because checking has more overhead than writing.
+const writerSIMDCheckThreshold = 64
 
 // fieldNeedsQuotes reports whether field requires quoting.
 // Dispatches to SIMD or scalar based on CPU support and field size.
@@ -110,21 +113,26 @@ func (w *Writer) fieldNeedsQuotes(field string) bool {
 	if field[0] == ' ' || field[0] == '\t' {
 		return true
 	}
-	// Use SIMD for ASCII delimiters (most common case)
-	if useAVX512 && len(field) >= writerSIMDMinSize && w.Comma >= 0 && w.Comma < 128 {
+	// Use SIMD only for larger fields where the overhead is justified
+	if useAVX512 && len(field) >= writerSIMDCheckThreshold && w.Comma >= 0 && w.Comma < 128 {
 		return w.fieldNeedsQuotesSIMD(field)
 	}
 	return w.fieldNeedsQuotesScalar(field)
 }
 
-// fieldNeedsQuotesScalar checks for special characters using optimized string search.
-// strings.IndexAny is internally optimized and uses SIMD on modern Go runtimes.
+// fieldNeedsQuotesScalar checks for special characters using direct byte iteration.
+// This is faster than strings.ContainsAny for short strings due to charset building overhead.
 func (w *Writer) fieldNeedsQuotesScalar(field string) bool {
-	// For ASCII comma (common case), use IndexAny with precomputed charset
+	// For ASCII comma (common case), use direct byte comparison
 	if w.Comma < 128 {
-		// Build search charset: comma + newline + carriage return + quote
-		charset := string([]byte{byte(w.Comma), '\n', '\r', '"'})
-		return strings.ContainsAny(field, charset)
+		comma := byte(w.Comma)
+		for i := 0; i < len(field); i++ {
+			c := field[i]
+			if c == comma || c == '\n' || c == '\r' || c == '"' {
+				return true
+			}
+		}
+		return false
 	}
 	// For non-ASCII comma, fall back to rune iteration
 	for _, c := range field {
@@ -184,6 +192,7 @@ func (w *Writer) writeQuotedField(field string) error {
 	if err := w.w.WriteByte('"'); err != nil {
 		return err
 	}
+	// Use SIMD for fields that benefit from parallel quote detection
 	if useAVX512 && len(field) >= writerSIMDMinSize {
 		return w.writeQuotedFieldSIMD(field)
 	}
