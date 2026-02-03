@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"io"
 	"math/bits"
+	"strings"
 	"unsafe"
 
 	"simd/archsimd"
@@ -95,6 +96,10 @@ func (w *Writer) Error() error {
 	return w.err
 }
 
+// writerSIMDMinSize is the minimum field size for SIMD benefit in Writer.
+// Smaller than the general simdMinThreshold because we use padded operations.
+const writerSIMDMinSize = 8
+
 // fieldNeedsQuotes reports whether field requires quoting.
 // Dispatches to SIMD or scalar based on CPU support and field size.
 func (w *Writer) fieldNeedsQuotes(field string) bool {
@@ -105,15 +110,23 @@ func (w *Writer) fieldNeedsQuotes(field string) bool {
 	if field[0] == ' ' || field[0] == '\t' {
 		return true
 	}
-	// Use SIMD for ASCII delimiters and fields meeting size threshold
-	if shouldUseSIMD(len(field)) && w.Comma >= 0 && w.Comma < 128 {
+	// Use SIMD for ASCII delimiters (most common case)
+	if useAVX512 && len(field) >= writerSIMDMinSize && w.Comma >= 0 && w.Comma < 128 {
 		return w.fieldNeedsQuotesSIMD(field)
 	}
 	return w.fieldNeedsQuotesScalar(field)
 }
 
-// fieldNeedsQuotesScalar checks for special characters using scalar iteration.
+// fieldNeedsQuotesScalar checks for special characters using optimized string search.
+// strings.IndexAny is internally optimized and uses SIMD on modern Go runtimes.
 func (w *Writer) fieldNeedsQuotesScalar(field string) bool {
+	// For ASCII comma (common case), use IndexAny with precomputed charset
+	if w.Comma < 128 {
+		// Build search charset: comma + newline + carriage return + quote
+		charset := string([]byte{byte(w.Comma), '\n', '\r', '"'})
+		return strings.ContainsAny(field, charset)
+	}
+	// For non-ASCII comma, fall back to rune iteration
 	for _, c := range field {
 		if c == w.Comma || c == '\n' || c == '\r' || c == '"' {
 			return true
@@ -123,6 +136,7 @@ func (w *Writer) fieldNeedsQuotesScalar(field string) bool {
 }
 
 // fieldNeedsQuotesSIMD uses AVX-512 SIMD to detect special characters requiring quoting.
+// Handles any field size >= writerSIMDMinSize using padded operations for partial chunks.
 func (w *Writer) fieldNeedsQuotesSIMD(field string) bool {
 	data := unsafe.Slice(unsafe.StringData(field), len(field))
 	int8Data := bytesToInt8Slice(data)
@@ -145,10 +159,20 @@ func (w *Writer) fieldNeedsQuotesSIMD(field string) bool {
 		offset += simdChunkSize
 	}
 
-	// Process remaining bytes (< 64 bytes, scalar is sufficient)
-	for ; offset < len(data); offset++ {
-		c := data[offset]
-		if c == byte(w.Comma) || c == '\n' || c == '\r' || c == '"' {
+	// Process remaining bytes using SIMD with partial load
+	if offset < len(data) {
+		remaining := data[offset:]
+		chunk := archsimd.LoadInt8x64SlicePart(bytesToInt8Slice(remaining))
+
+		commaMask := chunk.Equal(commaCmp).ToBits()
+		newlineMask := chunk.Equal(cachedNlCmp).ToBits()
+		crMask := chunk.Equal(cachedCrCmp).ToBits()
+		quoteMask := chunk.Equal(cachedQuoteCmp).ToBits()
+
+		// Mask out bits beyond valid data
+		validBits := len(remaining)
+		mask := (uint64(1) << validBits) - 1
+		if (commaMask|newlineMask|crMask|quoteMask)&mask != 0 {
 			return true
 		}
 	}
@@ -160,29 +184,45 @@ func (w *Writer) writeQuotedField(field string) error {
 	if err := w.w.WriteByte('"'); err != nil {
 		return err
 	}
-	if shouldUseSIMD(len(field)) {
+	if useAVX512 && len(field) >= writerSIMDMinSize {
 		return w.writeQuotedFieldSIMD(field)
 	}
 	return w.writeQuotedFieldScalar(field)
 }
 
-// writeQuotedFieldScalar escapes quotes using scalar iteration.
+// writeQuotedFieldScalar escapes quotes using optimized batch writing.
+// Instead of writing character by character, it finds quotes using IndexByte
+// and writes chunks between quotes in single WriteString calls.
 func (w *Writer) writeQuotedFieldScalar(field string) error {
-	for _, c := range field {
-		if c == '"' {
-			if _, err := w.w.WriteString(`""`); err != nil {
-				return err
-			}
-		} else {
-			if _, err := w.w.WriteRune(c); err != nil {
-				return err
-			}
+	lastWritten := 0
+	for i := 0; i < len(field); {
+		// Find next quote position from current offset
+		idx := strings.IndexByte(field[i:], '"')
+		if idx == -1 {
+			break // No more quotes in remaining string
+		}
+		quotePos := i + idx
+		// Write content up to and including the quote, then add escape quote
+		if _, err := w.w.WriteString(field[lastWritten : quotePos+1]); err != nil {
+			return err
+		}
+		if err := w.w.WriteByte('"'); err != nil {
+			return err
+		}
+		lastWritten = quotePos + 1
+		i = lastWritten
+	}
+	// Write remaining content after last quote (or entire field if no quotes)
+	if lastWritten < len(field) {
+		if _, err := w.w.WriteString(field[lastWritten:]); err != nil {
+			return err
 		}
 	}
 	return w.w.WriteByte('"')
 }
 
 // writeQuotedFieldSIMD escapes quotes using AVX-512 SIMD to find quote positions.
+// Handles any field size >= writerSIMDMinSize using padded operations for partial chunks.
 func (w *Writer) writeQuotedFieldSIMD(field string) error {
 	data := unsafe.Slice(unsafe.StringData(field), len(field))
 	int8Data := bytesToInt8Slice(data)
@@ -213,16 +253,31 @@ func (w *Writer) writeQuotedFieldSIMD(field string) error {
 		offset += simdChunkSize
 	}
 
-	// Process remaining bytes (< 64 bytes, scalar is sufficient)
-	for ; offset < len(data); offset++ {
-		if data[offset] == '"' {
-			if _, err := w.w.WriteString(field[lastWritten : offset+1]); err != nil {
+	// Process remaining bytes using SIMD with partial load
+	if offset < len(data) {
+		remaining := data[offset:]
+		chunk := archsimd.LoadInt8x64SlicePart(bytesToInt8Slice(remaining))
+		mask := chunk.Equal(cachedQuoteCmp).ToBits()
+
+		// Mask out bits beyond valid data
+		validBits := len(remaining)
+		validMask := (uint64(1) << validBits) - 1
+		mask &= validMask
+
+		for mask != 0 {
+			pos := bits.TrailingZeros64(mask)
+			quotePos := offset + pos
+
+			// Write content up to and including the quote, then add escape quote
+			if _, err := w.w.WriteString(field[lastWritten : quotePos+1]); err != nil {
 				return err
 			}
 			if err := w.w.WriteByte('"'); err != nil {
 				return err
 			}
-			lastWritten = offset + 1
+
+			lastWritten = quotePos + 1
+			mask &= ^(uint64(1) << pos)
 		}
 	}
 
