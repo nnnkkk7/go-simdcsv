@@ -39,6 +39,7 @@ type parserState struct {
 	quoteAdjust      uint64 // bytes to skip for opening quote (0 or 1)
 	lastSepOrNewline int64  // last separator/newline position (-1 initially)
 	lastClosingQuote int64  // last closing quote position (-1 if none)
+	sawQuote         bool   // true if quote was seen in current field (for validation optimization)
 }
 
 // newParserState creates an initialized parser state.
@@ -67,6 +68,7 @@ func (s *parserState) resetForNextField(delimiterPos uint64) {
 	s.quoteAdjust = 0
 	s.lastSepOrNewline = int64(delimiterPos)
 	s.lastClosingQuote = -1
+	s.sawQuote = false
 }
 
 // =============================================================================
@@ -122,12 +124,13 @@ type fieldInfo struct {
 	start       uint32 // content start offset (after opening quote if quoted)
 	length      uint32 // content length (excluding quotes)
 	rawEndDelta uint8  // delta from start+length to raw end position
-	flags       uint8  // bit0: needsUnescape, bit1: isQuoted
+	flags       uint8  // bit0: needsUnescape, bit1: isQuoted, bit2: containsQuote
 }
 
 const (
 	fieldFlagNeedsUnescape = 1 << 0
 	fieldFlagIsQuoted      = 1 << 1
+	fieldFlagContainsQuote = 1 << 2 // field contains quote character (for validation optimization)
 )
 
 // rawStart returns the raw start position (including opening quote if quoted).
@@ -144,10 +147,13 @@ func (f *fieldInfo) rawEnd() uint32 {
 }
 
 // newFieldInfo creates a fieldInfo from parsed boundaries.
-func newFieldInfo(start, length uint64, rawEndDelta uint8, isQuoted bool) fieldInfo {
+func newFieldInfo(start, length uint64, rawEndDelta uint8, isQuoted, containsQuote bool) fieldInfo {
 	var flags uint8
 	if isQuoted {
 		flags = fieldFlagIsQuoted
+	}
+	if containsQuote {
+		flags |= fieldFlagContainsQuote
 	}
 	return fieldInfo{
 		start:       uint32(start),
@@ -169,6 +175,12 @@ func (f *fieldInfo) setNeedsUnescape(v bool) {
 // needsUnescape returns whether the field needs double quote unescaping.
 func (f *fieldInfo) needsUnescape() bool {
 	return f.flags&fieldFlagNeedsUnescape != 0
+}
+
+// containsQuote returns whether the field contains any quote characters.
+// Used for validation optimization - fields without quotes don't need quote validation.
+func (f *fieldInfo) containsQuote() bool {
+	return f.flags&fieldFlagContainsQuote != 0
 }
 
 // rowInfo holds row metadata.
@@ -387,6 +399,7 @@ func classifyEvent(bit, quoteMask, sepMask uint64) eventType {
 
 // handleQuoteEvent processes a quote character, toggling the quoted state.
 func handleQuoteEvent(absPos uint64, state *parserState) {
+	state.sawQuote = true // Mark that this field contains a quote
 	if state.quoted {
 		state.exitQuotedState(absPos)
 	} else {
@@ -430,6 +443,7 @@ func skipBlankLine(state *parserState, absPos uint64, lineNum *int) {
 	state.fieldStart = absPos + 1
 	state.quoteAdjust = 0
 	state.lastClosingQuote = -1
+	state.sawQuote = false
 	(*lineNum)++
 }
 
@@ -441,7 +455,8 @@ func skipBlankLine(state *parserState, absPos uint64, lineNum *int) {
 // For newline delimiters (isNewline=true), excludes trailing CR from CRLF sequences.
 func recordField(buf []byte, absPos uint64, state *parserState, result *parseResult, isNewline bool) {
 	bounds := computeFieldBounds(buf, absPos, state, isNewline)
-	result.fields = append(result.fields, newFieldInfo(bounds.start, bounds.length, bounds.rawEndDelta, bounds.isQuoted))
+	containsQuote := state.sawQuote
+	result.fields = append(result.fields, newFieldInfo(bounds.start, bounds.length, bounds.rawEndDelta, bounds.isQuoted, containsQuote))
 	state.resetForNextField(absPos)
 }
 
@@ -544,8 +559,9 @@ func finalizeLastField(buf []byte, state *parserState, result *parseResult, rowF
 	fieldLen := computeFieldLength(bufLen, start, state)
 	rawEndDelta := computeRawEndDelta(bufLen, start, fieldLen)
 	isQuoted := state.quoteAdjust > 0
+	containsQuote := state.sawQuote
 
-	result.fields = append(result.fields, newFieldInfo(start, fieldLen, rawEndDelta, isQuoted))
+	result.fields = append(result.fields, newFieldInfo(start, fieldLen, rawEndDelta, isQuoted, containsQuote))
 	result.rows = append(result.rows, rowInfo{
 		firstField: rowFirstField,
 		fieldCount: len(result.fields) - rowFirstField,

@@ -337,28 +337,46 @@ func normalizeCRLF(crMask, nlMask, nextNlMask uint64, validBits int) uint64 {
 // separators inside quoted regions. Detects escaped double quotes ("") including
 // those spanning chunk boundaries.
 func processQuotesAndSeparators(quoteMask, sepMask, nextQuoteMask uint64, state *scanState) (quoteMaskOut, sepMaskOut uint64, hasDoubleQuote, boundaryDoubleQuote bool) {
-	quoteMaskOut = quoteMask
-	workQuote := quoteMask
 	quoted := state.quoted
 	initialQuoted := quoted
 
-	// Step 1: Process quotes to detect and remove double quotes
+	// Fast path: no quotes in this chunk
+	if quoteMask == 0 {
+		if quoted == 0 {
+			return 0, sepMask, false, false
+		}
+		// All separators are inside quoted region
+		return 0, 0, false, false
+	}
+
+	quoteMaskOut = quoteMask
+
+	// Pre-detect adjacent quote pairs (potential double quotes when inside quoted region)
+	// adjacentPairs has bit set at the LEFT position of each adjacent pair
+	adjacentPairs := quoteMask & (quoteMask >> 1)
+
+	// Pre-check for boundary double quote (quote at pos 63 with quote at pos 0 of next chunk)
+	const lastBit = uint64(1) << 63
+	boundaryCandidate := quoteMask&lastBit != 0 && nextQuoteMask&1 != 0
+
+	workQuote := quoteMask
 	for workQuote != 0 {
 		pos := bits.TrailingZeros64(workQuote)
 		bit := uint64(1) << pos
 
 		if quoted != 0 {
 			// Inside quotes: check for escaped double quote
-			if pos == simdChunkSize-1 && nextQuoteMask&1 != 0 {
+			if adjacentPairs&bit != 0 {
+				// Adjacent double quote - remove both quotes from output
+				nextBit := bit << 1
+				quoteMaskOut &^= bit | nextBit
+				hasDoubleQuote = true
+				workQuote &^= nextBit // Skip next quote
+			} else if pos == 63 && boundaryCandidate {
 				// Boundary double quote
-				quoteMaskOut &^= uint64(1) << (simdChunkSize - 1)
+				quoteMaskOut &^= lastBit
 				hasDoubleQuote = true
 				boundaryDoubleQuote = true
-			} else if pos < simdChunkSize-1 && workQuote&(uint64(1)<<(pos+1)) != 0 {
-				// Adjacent double quote
-				quoteMaskOut &^= uint64(3) << pos
-				hasDoubleQuote = true
-				workQuote &^= uint64(1) << (pos + 1)
 			} else {
 				// Closing quote
 				quoted = 0
@@ -372,7 +390,7 @@ func processQuotesAndSeparators(quoteMask, sepMask, nextQuoteMask uint64, state 
 
 	state.quoted = quoted
 
-	// Step 2: Invalidate separators using prefix XOR on clean quote mask
+	// Invalidate separators using prefix XOR on cleaned quote mask
 	inQuote := quoteMaskOut
 	inQuote ^= inQuote << 1
 	inQuote ^= inQuote << 2

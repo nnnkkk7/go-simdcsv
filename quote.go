@@ -3,6 +3,7 @@
 package simdcsv
 
 import (
+	"bytes"
 	"math/bits"
 
 	"simd/archsimd"
@@ -78,15 +79,17 @@ func findClosingQuote(data []byte, startAfterOpenQuote int) int {
 
 // findClosingQuoteScalar finds the closing quote using scalar operations.
 func findClosingQuoteScalar(data []byte, startAfterOpenQuote int) int {
-	for i := startAfterOpenQuote; i < len(data); i++ {
-		if data[i] != '"' {
+	for i := startAfterOpenQuote; i < len(data); {
+		next := bytes.IndexByte(data[i:], '"')
+		if next == -1 {
+			return -1
+		}
+		pos := i + next
+		if isEscapedQuote(data, pos) {
+			i = pos + 2
 			continue
 		}
-		if isEscapedQuote(data, i) {
-			i++ // Skip second quote of escape sequence (loop increments again)
-			continue
-		}
-		return i
+		return pos
 	}
 	return -1
 }
@@ -125,6 +128,21 @@ func findClosingQuoteSIMD(data []byte, startAfterOpenQuote int) int {
 // processQuoteMask processes quote positions in a SIMD chunk mask.
 // Returns (closingQuoteIdx, newPosition, shouldExitLoop).
 func processQuoteMask(data []byte, chunkStart int, mask uint64) (int, int, bool) {
+	// Fast path: no adjacent quotes in this chunk, so first quote closes.
+	if mask&(mask<<1) == 0 {
+		pos := bits.TrailingZeros64(mask)
+		if pos == simdChunkSize-1 {
+			newPos := chunkStart + simdChunkSize
+			if newPos < len(data) && data[newPos] == '"' {
+				// Boundary double quote → skip both
+				return -1, newPos + 1, false
+			}
+			// Closing quote at boundary
+			return chunkStart + pos, chunkStart, false
+		}
+		return chunkStart + pos, chunkStart, false
+	}
+
 	for mask != 0 {
 		pos := bits.TrailingZeros64(mask)
 
