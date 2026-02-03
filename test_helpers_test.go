@@ -202,3 +202,63 @@ func generateEscapedQuotesCSV(numRows, numCols int) []byte {
 	}
 	return buf.Bytes()
 }
+
+// =============================================================================
+// Writer Benchmark Record Generators
+// =============================================================================
+
+// generateSimpleRecords generates records with simple unquoted fields.
+func generateSimpleRecords(numRows, numCols int) [][]string {
+	records := make([][]string, numRows)
+	for i := range records {
+		record := make([]string, numCols)
+		for j := range record {
+			record[j] = "field"
+		}
+		records[i] = record
+	}
+	return records
+}
+
+// generateQuotedRecords generates records with fields containing commas (requires quoting).
+func generateQuotedRecords(numRows, numCols int) [][]string {
+	records := make([][]string, numRows)
+	for i := range records {
+		record := make([]string, numCols)
+		for j := range record {
+			record[j] = "field,with,commas"
+		}
+		records[i] = record
+	}
+	return records
+}
+
+// generateMixedRecords generates records with mixed simple/quoted fields.
+func generateMixedRecords(numRows, numCols int) [][]string {
+	records := make([][]string, numRows)
+	for i := range records {
+		record := make([]string, numCols)
+		for j := range record {
+			if j%2 == 0 {
+				record[j] = "simple"
+			} else {
+				record[j] = "quoted,field"
+			}
+		}
+		records[i] = record
+	}
+	return records
+}
+
+// generateEscapedQuotesRecords generates records with fields containing quotes (requires escaping).
+func generateEscapedQuotesRecords(numRows, numCols int) [][]string {
+	records := make([][]string, numRows)
+	for i := range records {
+		record := make([]string, numCols)
+		for j := range record {
+			record[j] = `he said "hello" to me`
+		}
+		records[i] = record
+	}
+	return records
+}
