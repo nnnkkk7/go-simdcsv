@@ -1160,3 +1160,165 @@ func popcount(x uint64) int {
 	}
 	return count
 }
+
+// ============================================================================
+// TestPrefixXOR - Test prefix XOR computation (PCLMULQDQ optimization)
+// ============================================================================
+
+func TestPrefixXOR(t *testing.T) {
+	// prefixXOR computes the cumulative XOR: result[i] = XOR of bits 0..i
+	// This is used for quote region detection: bit i is set if there's an
+	// odd number of quotes at positions 0 through i (inclusive).
+	tests := []struct {
+		name  string
+		input uint64
+		want  uint64
+	}{
+		{
+			name:  "empty",
+			input: 0,
+			want:  0, // no quotes = no regions
+		},
+		{
+			name:  "single_bit_0",
+			input: 1, // quote at position 0
+			// All positions 0..63 have odd count (1) → all bits set
+			want: 0xFFFFFFFFFFFFFFFF,
+		},
+		{
+			name:  "single_bit_1",
+			input: 2, // quote at position 1 (0b10)
+			// pos 0: 0 quotes → 0; pos 1+: 1 quote → 1
+			want: 0xFFFFFFFFFFFFFFFE,
+		},
+		{
+			name:  "single_bit_2",
+			input: 4, // quote at position 2 (0b100)
+			// pos 0,1: 0 quotes → 0; pos 2+: 1 quote → 1
+			want: 0xFFFFFFFFFFFFFFFC,
+		},
+		{
+			name:  "two_adjacent_bits",
+			input: 0b11, // quotes at positions 0,1
+			// pos 0: 1 quote → 1; pos 1+: 2 quotes → 0
+			want: 0x0000000000000001,
+		},
+		{
+			name:  "alternating_bits_8bit",
+			input: 0xAA, // 0b10101010 = quotes at positions 1,3,5,7
+			// pos 0: 0→0, pos 1: 1→1, pos 2: 1→1, pos 3: 2→0,
+			// pos 4: 2→0, pos 5: 3→1, pos 6: 3→1, pos 7: 4→0
+			// Low 8 bits: 0b01100110 = 0x66
+			// pos 8+: 4 quotes (even) → 0
+			want: 0x0000000000000066,
+		},
+		{
+			name:  "quote_example",
+			input: 0x4A, // 0b01001010 = quotes at positions 1, 3, 6
+			// pos 0: 0→0, pos 1: 1→1, pos 2: 1→1, pos 3: 2→0,
+			// pos 4: 2→0, pos 5: 2→0, pos 6: 3→1, pos 7+: 3→1 (odd)
+			// Low 8 bits: 0b11000110 = 0xC6
+			// Upper bits: all 1 (odd count continues)
+			want: 0xFFFFFFFFFFFFFFC6,
+		},
+		{
+			name:  "all_ones_8bit",
+			input: 0xFF, // quotes at all positions 0-7
+			// pos 0: 1→1, pos 1: 2→0, pos 2: 3→1, pos 3: 4→0, ...
+			// Pattern: 10101010... = 0x55 for low 8 bits
+			// pos 8+: 8 quotes (even) → 0
+			want: 0x0000000000000055,
+		},
+		{
+			name:  "high_bit_only",
+			input: uint64(1) << 63, // quote at position 63 only
+			// pos 0-62: 0 quotes → 0; pos 63: 1 quote → 1
+			want: 0x8000000000000000,
+		},
+		{
+			name:  "bits_0_and_63",
+			input: 1 | (uint64(1) << 63), // quotes at positions 0 and 63
+			// pos 0: 1→1, pos 1-62: 1→1 (odd), pos 63: 2→0
+			want: 0x7FFFFFFFFFFFFFFF,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := prefixXOR(tt.input)
+			if got != tt.want {
+				t.Errorf("prefixXOR(0x%016x) = 0x%016x, want 0x%016x",
+					tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestPrefixXORQuoteRegions tests the actual use case: converting quote positions to regions
+func TestPrefixXORQuoteRegions(t *testing.T) {
+	// prefixXOR result[i] = 1 means odd number of quotes at positions 0..i (inclusive)
+	// In CSV parsing context:
+	// - Position i has inQuote[i]=1 if we're at or after an opening quote but not past a closing quote
+	// - Quote chars themselves are considered "in quote" for masking purposes
+	tests := []struct {
+		name          string
+		quotePos      []int // positions where quotes appear
+		wantInQuote   []int // positions where inQuote bit should be 1
+		wantOutQuote  []int // positions where inQuote bit should be 0
+		initialQuoted bool  // if true, we start inside a quoted region
+	}{
+		{
+			name:     "simple_quoted_field",
+			quotePos: []int{0, 5}, // "hello" - quotes at 0 and 5
+			// pos 0: 1 quote → 1; pos 1-4: 1 quote → 1; pos 5: 2 quotes → 0
+			wantInQuote:  []int{0, 1, 2, 3, 4},
+			wantOutQuote: []int{5, 6, 7, 8},
+		},
+		{
+			name:     "two_quoted_fields",
+			quotePos: []int{0, 3, 5, 8}, // "ab","cd" - pattern at 0,3,5,8
+			// pos 0-2: 1 quote → 1; pos 3-4: 2 quotes → 0; pos 5-7: 3 quotes → 1; pos 8+: 4 quotes → 0
+			wantInQuote:  []int{0, 1, 2, 5, 6, 7},
+			wantOutQuote: []int{3, 4, 8, 9, 10},
+		},
+		{
+			name:     "start_inside_quote",
+			quotePos: []int{5}, // closing quote at 5
+			// Without inversion: pos 0-4: 0 quotes → 0; pos 5+: 1 quote → 1
+			// With inversion (initialQuoted=true): pos 0-4: 1; pos 5+: 0
+			wantInQuote:   []int{0, 1, 2, 3, 4},
+			wantOutQuote:  []int{5, 6, 7, 8},
+			initialQuoted: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Build quote mask
+			var quoteMask uint64
+			for _, pos := range tt.quotePos {
+				quoteMask |= uint64(1) << pos
+			}
+
+			// Compute in-quote mask using prefixXOR
+			inQuote := prefixXOR(quoteMask)
+			if tt.initialQuoted {
+				inQuote = ^inQuote
+			}
+
+			// Verify expected in-quote positions
+			for _, pos := range tt.wantInQuote {
+				if inQuote&(uint64(1)<<pos) == 0 {
+					t.Errorf("position %d should be inside quotes (bit=1), but bit is 0. inQuote=0x%016x", pos, inQuote)
+				}
+			}
+
+			// Verify expected out-quote positions
+			for _, pos := range tt.wantOutQuote {
+				if inQuote&(uint64(1)<<pos) != 0 {
+					t.Errorf("position %d should be outside quotes (bit=0), but bit is 1. inQuote=0x%016x", pos, inQuote)
+				}
+			}
+		})
+	}
+}

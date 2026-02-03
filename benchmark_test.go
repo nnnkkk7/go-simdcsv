@@ -570,7 +570,7 @@ func BenchmarkGenerateMasks(b *testing.B) {
 	copy(data, []byte(`"field1","field2","field3","field4","field5","field6","fie"`))
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		generateMasks(data, ',')
 	}
 }
@@ -590,7 +590,7 @@ func BenchmarkGenerateMasksPadded(b *testing.B) {
 			}
 
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				generateMasksPadded(data, ',')
 			}
 		})
@@ -617,7 +617,7 @@ func BenchmarkScanBuffer(b *testing.B) {
 
 			b.ResetTimer()
 			b.SetBytes(int64(size))
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				scanBuffer(data, ',')
 			}
 		})
@@ -665,7 +665,65 @@ func BenchmarkParseBuffer(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = parseBuffer(data, sr)
+	}
+}
+
+// =============================================================================
+// prefixXOR Benchmarks - PCLMULQDQ
+// =============================================================================
+
+func BenchmarkPrefixXOR(b *testing.B) {
+	// Create test masks with varying densities
+	testCases := []struct {
+		name string
+		mask uint64
+	}{
+		{"empty", 0},
+		{"single_bit", 1},
+		{"sparse", 0x0001000100010001}, // few bits set
+		{"medium", 0x5555555555555555}, // alternating bits
+		{"dense", 0xFFFFFFFFFFFFFFFF},  // all bits set
+		{"realistic", 0b0100010001000100010001000100010001000100010001000100010001000100}, // quote-like pattern
+	}
+
+	for _, tc := range testCases {
+		b.Run(tc.name, func(b *testing.B) {
+			for b.Loop() {
+				_ = prefixXOR(tc.mask)
+			}
+		})
+	}
+}
+
+// BenchmarkPrefixXORThroughput measures throughput with sequential masks
+func BenchmarkPrefixXORThroughput(b *testing.B) {
+	// Pre-generate masks to avoid setup overhead
+	masks := make([]uint64, 1024)
+	state := uint64(0xDEADBEEFCAFEBABE)
+	for i := range masks {
+		state ^= state << 13
+		state ^= state >> 7
+		state ^= state << 17
+		masks[i] = state
+	}
+
+	idx := 0
+	for b.Loop() {
+		_ = prefixXOR(masks[idx%len(masks)])
+		idx++
+	}
+}
+
+// BenchmarkPrefixXORLatencyChain measures latency when each call depends on previous
+func BenchmarkPrefixXORLatencyChain(b *testing.B) {
+	mask := uint64(0x5555555555555555)
+	for b.Loop() {
+		mask = prefixXOR(mask)
+	}
+	// Prevent compiler from optimizing away
+	if mask == 0 {
+		b.Fatal("unexpected zero")
 	}
 }
