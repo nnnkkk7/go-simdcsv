@@ -124,7 +124,7 @@ func (w *Writer) fieldNeedsQuotesScalar(field string) bool {
 	if w.Comma < 128 {
 		// Build search charset: comma + newline + carriage return + quote
 		charset := string([]byte{byte(w.Comma), '\n', '\r', '"'})
-		return strings.ContainsAny(field, charset)
+		return strings.IndexAny(field, charset) >= 0
 	}
 	// For non-ASCII comma, fall back to rune iteration
 	for _, c := range field {
