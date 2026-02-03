@@ -356,6 +356,212 @@ func BenchmarkWriteQuotedField_Long(b *testing.B) {
 }
 
 // =============================================================================
+// WriteAll Benchmarks - Simple CSV
+// =============================================================================
+
+func BenchmarkWriteAll_Simple_1K_Stdlib(b *testing.B) {
+	records := generateSimpleRecords(1000, 10)
+	for b.Loop() {
+		var buf bytes.Buffer
+		w := csv.NewWriter(&buf)
+		_ = w.WriteAll(records)
+	}
+}
+
+func BenchmarkWriteAll_Simple_1K_SIMD(b *testing.B) {
+	records := generateSimpleRecords(1000, 10)
+	for b.Loop() {
+		var buf bytes.Buffer
+		w := NewWriter(&buf)
+		_ = w.WriteAll(records)
+	}
+}
+
+func BenchmarkWriteAll_Simple_10K_Stdlib(b *testing.B) {
+	records := generateSimpleRecords(10000, 10)
+	for b.Loop() {
+		var buf bytes.Buffer
+		w := csv.NewWriter(&buf)
+		_ = w.WriteAll(records)
+	}
+}
+
+func BenchmarkWriteAll_Simple_10K_SIMD(b *testing.B) {
+	records := generateSimpleRecords(10000, 10)
+	for b.Loop() {
+		var buf bytes.Buffer
+		w := NewWriter(&buf)
+		_ = w.WriteAll(records)
+	}
+}
+
+func BenchmarkWriteAll_Simple_100K_Stdlib(b *testing.B) {
+	records := generateSimpleRecords(100000, 10)
+	for b.Loop() {
+		var buf bytes.Buffer
+		w := csv.NewWriter(&buf)
+		_ = w.WriteAll(records)
+	}
+}
+
+func BenchmarkWriteAll_Simple_100K_SIMD(b *testing.B) {
+	records := generateSimpleRecords(100000, 10)
+	for b.Loop() {
+		var buf bytes.Buffer
+		w := NewWriter(&buf)
+		_ = w.WriteAll(records)
+	}
+}
+
+// =============================================================================
+// WriteAll Benchmarks - Quoted CSV
+// =============================================================================
+
+func BenchmarkWriteAll_Quoted_1K_Stdlib(b *testing.B) {
+	records := generateQuotedRecords(1000, 10)
+	for b.Loop() {
+		var buf bytes.Buffer
+		w := csv.NewWriter(&buf)
+		_ = w.WriteAll(records)
+	}
+}
+
+func BenchmarkWriteAll_Quoted_1K_SIMD(b *testing.B) {
+	records := generateQuotedRecords(1000, 10)
+	for b.Loop() {
+		var buf bytes.Buffer
+		w := NewWriter(&buf)
+		_ = w.WriteAll(records)
+	}
+}
+
+func BenchmarkWriteAll_Quoted_10K_Stdlib(b *testing.B) {
+	records := generateQuotedRecords(10000, 10)
+	for b.Loop() {
+		var buf bytes.Buffer
+		w := csv.NewWriter(&buf)
+		_ = w.WriteAll(records)
+	}
+}
+
+func BenchmarkWriteAll_Quoted_10K_SIMD(b *testing.B) {
+	records := generateQuotedRecords(10000, 10)
+	for b.Loop() {
+		var buf bytes.Buffer
+		w := NewWriter(&buf)
+		_ = w.WriteAll(records)
+	}
+}
+
+// =============================================================================
+// WriteAll Benchmarks - Mixed CSV
+// =============================================================================
+
+func BenchmarkWriteAll_Mixed_1K_Stdlib(b *testing.B) {
+	records := generateMixedRecords(1000, 10)
+	for b.Loop() {
+		var buf bytes.Buffer
+		w := csv.NewWriter(&buf)
+		_ = w.WriteAll(records)
+	}
+}
+
+func BenchmarkWriteAll_Mixed_1K_SIMD(b *testing.B) {
+	records := generateMixedRecords(1000, 10)
+	for b.Loop() {
+		var buf bytes.Buffer
+		w := NewWriter(&buf)
+		_ = w.WriteAll(records)
+	}
+}
+
+func BenchmarkWriteAll_Mixed_10K_Stdlib(b *testing.B) {
+	records := generateMixedRecords(10000, 10)
+	for b.Loop() {
+		var buf bytes.Buffer
+		w := csv.NewWriter(&buf)
+		_ = w.WriteAll(records)
+	}
+}
+
+func BenchmarkWriteAll_Mixed_10K_SIMD(b *testing.B) {
+	records := generateMixedRecords(10000, 10)
+	for b.Loop() {
+		var buf bytes.Buffer
+		w := NewWriter(&buf)
+		_ = w.WriteAll(records)
+	}
+}
+
+// =============================================================================
+// WriteAll Benchmarks - Escaped Quotes CSV
+// =============================================================================
+
+func BenchmarkWriteAll_EscapedQuotes_1K_Stdlib(b *testing.B) {
+	records := generateEscapedQuotesRecords(1000, 10)
+	for b.Loop() {
+		var buf bytes.Buffer
+		w := csv.NewWriter(&buf)
+		_ = w.WriteAll(records)
+	}
+}
+
+func BenchmarkWriteAll_EscapedQuotes_1K_SIMD(b *testing.B) {
+	records := generateEscapedQuotesRecords(1000, 10)
+	for b.Loop() {
+		var buf bytes.Buffer
+		w := NewWriter(&buf)
+		_ = w.WriteAll(records)
+	}
+}
+
+func BenchmarkWriteAll_EscapedQuotes_10K_Stdlib(b *testing.B) {
+	records := generateEscapedQuotesRecords(10000, 10)
+	for b.Loop() {
+		var buf bytes.Buffer
+		w := csv.NewWriter(&buf)
+		_ = w.WriteAll(records)
+	}
+}
+
+func BenchmarkWriteAll_EscapedQuotes_10K_SIMD(b *testing.B) {
+	records := generateEscapedQuotesRecords(10000, 10)
+	for b.Loop() {
+		var buf bytes.Buffer
+		w := NewWriter(&buf)
+		_ = w.WriteAll(records)
+	}
+}
+
+// =============================================================================
+// Record-by-Record Write Benchmarks
+// =============================================================================
+
+func BenchmarkWrite_RecordByRecord_10K_Stdlib(b *testing.B) {
+	records := generateSimpleRecords(10000, 10)
+	for b.Loop() {
+		var buf bytes.Buffer
+		w := csv.NewWriter(&buf)
+		for _, record := range records {
+			_ = w.Write(record)
+		}
+		w.Flush()
+	}
+}
+
+func BenchmarkWrite_RecordByRecord_10K_SIMD(b *testing.B) {
+	records := generateSimpleRecords(10000, 10)
+	for b.Loop() {
+		var buf bytes.Buffer
+		w := NewWriter(&buf)
+		for _, record := range records {
+			_ = w.Write(record)
+		}
+		_ = w.Flush()
+	}
+}
+
+// =============================================================================
 // scanBuffer Benchmarks
 // =============================================================================
 
