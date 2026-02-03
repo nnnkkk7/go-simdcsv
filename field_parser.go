@@ -128,9 +128,9 @@ type fieldInfo struct {
 }
 
 const (
-	fieldFlagNeedsUnescape  = 1 << 0
-	fieldFlagIsQuoted       = 1 << 1
-	fieldFlagContainsQuote  = 1 << 2 // field contains quote character (for validation optimization)
+	fieldFlagNeedsUnescape = 1 << 0
+	fieldFlagIsQuoted      = 1 << 1
+	fieldFlagContainsQuote = 1 << 2 // field contains quote character (for validation optimization)
 )
 
 // rawStart returns the raw start position (including opening quote if quoted).

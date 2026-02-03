@@ -31,37 +31,6 @@ func (p validationPolicy) shouldUseMetadata(field fieldInfo) bool {
 }
 
 // =============================================================================
-// Chunk-Level Quote Detection - Fast path optimization
-// =============================================================================
-
-// fieldMayContainQuote reports whether any chunk overlapped by the field contains a quote.
-// Returns true conservatively when chunk data is unavailable.
-func (r *Reader) fieldMayContainQuote(rawStart, rawEnd uint64) bool {
-	if len(r.state.chunkHasQuote) == 0 {
-		return true // Conservative: assume quotes when no chunk data
-	}
-	if rawEnd <= rawStart {
-		return false // Empty range contains nothing
-	}
-
-	startChunk := int(rawStart / simdChunkSize)   //nolint:gosec // G115
-	endChunk := int((rawEnd - 1) / simdChunkSize) //nolint:gosec // G115
-	endChunk = min(endChunk, len(r.state.chunkHasQuote)-1)
-
-	return anyChunkHasQuote(r.state.chunkHasQuote, startChunk, endChunk)
-}
-
-// anyChunkHasQuote checks if any chunk in the range [start, end] contains a quote.
-func anyChunkHasQuote(chunks []bool, start, end int) bool {
-	for i := start; i <= end; i++ {
-		if chunks[i] {
-			return true
-		}
-	}
-	return false
-}
-
-// =============================================================================
 // Field Extraction - Mechanism for accessing raw field data
 // =============================================================================
 
