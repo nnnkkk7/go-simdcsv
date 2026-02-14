@@ -9,6 +9,17 @@
 - deps: upgrade go version to go1.26 by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/78
 - ci: add renovate by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/79
 - docs: update readme by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/80
+- Release for v0.1.0 by @github-actions[bot] in https://github.com/nnnkkk7/go-simdcsv/pull/73
+
+## [v0.1.0](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.14...v0.1.0) - 2026-02-14
+- refactor: enhance field parsing by adding quote detection and optimization flags by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/72
+- test: add benchmark tests for writer by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/74
+- refactor: optimize quote detection and writing by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/75
+- refactor: adjust SIMD thresholds and optimize quote detection in Writer by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/76
+- feat: use PCLMULQDQ by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/77
+- deps: upgrade go version to go1.26 by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/78
+- ci: add renovate by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/79
+- docs: update readme by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/80
 
 ## [v0.0.14](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.13...v0.0.14) - 2026-02-02
 - refactor: optimize chunk processing and introduce fast path for no-quote scenarios by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/65
