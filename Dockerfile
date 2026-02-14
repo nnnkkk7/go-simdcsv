@@ -1,4 +1,4 @@
-FROM golang:1.26-rc-bookworm
+FROM golang:1.26-bookworm
 WORKDIR /app
 
 # Install golangci-lint (latest version for Go 1.26 compatibility)
