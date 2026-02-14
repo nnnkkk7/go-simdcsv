@@ -154,7 +154,6 @@ GOEXPERIMENT=simd go test -bench=. -benchmem
 ## Known Limitations
 
 - **Experimental API**: `simd/archsimd` may have breaking changes in future Go releases
-- **Memory**: Reads entire input into memory (streaming I/O planned)
 - **Quoted fields**: Currently slower than `encoding/csv` for heavily quoted content
 
 ## Contributing
