@@ -30,9 +30,7 @@ jobs:
            go-version-file: 'go.mod'
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
-        with:
-          version: v2.8.0
+        run: go run github.com/golangci/golangci-lint/cmd/golangci-lint@v2.9.0 run
         env:
           GOEXPERIMENT: simd
 
