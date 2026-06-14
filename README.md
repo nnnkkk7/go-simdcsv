@@ -103,9 +103,10 @@ Benchmarks on AMD EPYC 9R14 with AVX-512 (Go 1.26, `GOEXPERIMENT=simd`). See [Co
 |---------|------|--------------|------------|------------|
 | Unquoted fields | 10K rows | 228 MB/s | 309 MB/s | **+35% faster** |
 | Unquoted fields | 100K rows | 214 MB/s | 288 MB/s | **+35% faster** |
-| All quoted fields | 10K rows | 765 MB/s | 537 MB/s | -30% slower |
+| Realistic (40% quoted) | 100K rows | ? MB/s | ? MB/s | ? |
+| Heavily quoted fields | 100K rows | ? MB/s | ? MB/s | ? |
 
-**Note:** SIMD acceleration benefits unquoted CSV data at scale. Quoted fields currently have overhead from validation passes.
+**Note:** Realistic rows mix 4 quoted fields (containing commas) with 6 plain fields per row — the case where PCLMULQDQ prefix-XOR fires on partial data. Heavily quoted uses all-quoted fields with embedded commas (worst case). Values marked `?` are measured on the AVX-512 CI runner.
 
 ## Architecture
 
