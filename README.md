@@ -4,7 +4,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/nnnkkk7/go-simdcsv)](https://goreportcard.com/report/github.com/nnnkkk7/go-simdcsv)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-SIMD-accelerated CSV parser for Go - Drop-in replacement for `encoding/csv` with AVX-512 optimization.
+SIMD-accelerated CSV parser for Go — drop-in replacement for `encoding/csv` with AVX-512 optimization.
 
 > **Experimental**: Requires Go 1.26+ with `GOEXPERIMENT=simd`. The SIMD API is unstable and may change. Not recommended for production use.
 
@@ -18,10 +18,10 @@ records, err := reader.ReadAll()
 if err != nil {
     log.Fatal(err)
 }
-// records: [[name age] [Alice 30] [Bob 25]]
+// records: [["name", "age"], ["Alice", "30"], ["Bob", "25"]]
 ```
 
-Same API as `encoding/csv` - just change the import.
+Same API as `encoding/csv` — just change the import.
 
 ## Features
 
