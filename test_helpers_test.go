@@ -203,6 +203,18 @@ func generateEscapedQuotesCSV(numRows, numCols int) []byte {
 	return buf.Bytes()
 }
 
+// generateRealistic10CSV generates CSV with 1/10 quoted fields containing commas (~10%).
+// Row template: "Alice, Smith",30,Tokyo,engineer,100,Japan,active,42,NewYork,2024
+// Col 0 is quoted.
+func generateRealistic10CSV(numRows, _ int) []byte {
+	var buf bytes.Buffer
+	for i := 0; i < numRows; i++ {
+		buf.WriteString(`"Alice, Smith",30,Tokyo,engineer,100,Japan,active,42,NewYork,2024`)
+		buf.WriteByte('\n')
+	}
+	return buf.Bytes()
+}
+
 // generateRealistic20CSV generates CSV with 2/10 quoted fields containing commas (~20%).
 // Row template: "Alice, Smith",30,Tokyo,engineer,100,Japan,active,42,"New York, US",2024
 // Cols 0,8 are quoted.
