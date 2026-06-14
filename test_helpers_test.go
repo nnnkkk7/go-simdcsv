@@ -275,18 +275,3 @@ func generateEscapedQuotesRecords(numRows, numCols int) [][]string {
 	}
 	return records
 }
-
-// generateRealisticRecords returns records matching generateRealisticCSV.
-func generateRealisticRecords(numRows, _ int) [][]string {
-	template := []string{
-		"Alice, Smith", "30", "Tokyo, JP", "engineer",
-		"100", "Japan, Asia", "active", "42", "New York, US", "2024",
-	}
-	records := make([][]string, numRows)
-	for i := range records {
-		row := make([]string, len(template))
-		copy(row, template)
-		records[i] = row
-	}
-	return records
-}
