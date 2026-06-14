@@ -1,5 +1,15 @@
 # Changelog
 
+## [v0.1.1](https://github.com/nnnkkk7/go-simdcsv/compare/v0.1.0...v0.1.1) - 2026-06-14
+- chore: polish docs, CI comments, and changelog by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/82
+- deps: bump Go to 1.26.4 by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/84
+- docs: document CI workflow and SIMD runner setup by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/85
+- bench: add Realistic (40% quoted) benchmark case by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/86
+- fix: remove unused generateRealisticRecords by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/88
+- bench: split Realistic into 20% and 40% quoted variants by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/89
+- bench: add Realistic10 (10% quoted) benchmark case by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/90
+- docs: add Realistic 10%/40% benchmark results to README by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/91
+
 ## [v0.1.0](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.14...v0.1.0) - 2026-02-14
 - refactor: enhance field parsing by adding quote detection and optimization flags by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/72
 - test: add benchmark tests for writer by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/74
