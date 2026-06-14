@@ -140,11 +140,11 @@ func BenchmarkReadAll_Quoted_100K_SIMD(b *testing.B) {
 }
 
 // =============================================================================
-// ReadAll Benchmarks - Realistic CSV (40% quoted)
+// ReadAll Benchmarks - Realistic CSV (20% quoted)
 // =============================================================================
 
-func BenchmarkReadAll_Realistic_100K_Stdlib(b *testing.B) {
-	data := generateRealisticCSV(100000, 10)
+func BenchmarkReadAll_Realistic20_100K_Stdlib(b *testing.B) {
+	data := generateRealistic20CSV(100000, 10)
 	b.SetBytes(int64(len(data)))
 	for b.Loop() {
 		reader := csv.NewReader(bytes.NewReader(data))
@@ -153,8 +153,32 @@ func BenchmarkReadAll_Realistic_100K_Stdlib(b *testing.B) {
 	}
 }
 
-func BenchmarkReadAll_Realistic_100K_SIMD(b *testing.B) {
-	data := generateRealisticCSV(100000, 10)
+func BenchmarkReadAll_Realistic20_100K_SIMD(b *testing.B) {
+	data := generateRealistic20CSV(100000, 10)
+	b.SetBytes(int64(len(data)))
+	for b.Loop() {
+		reader := NewReader(bytes.NewReader(data))
+		reader.FieldsPerRecord = -1
+		_, _ = reader.ReadAll()
+	}
+}
+
+// =============================================================================
+// ReadAll Benchmarks - Realistic CSV (40% quoted)
+// =============================================================================
+
+func BenchmarkReadAll_Realistic40_100K_Stdlib(b *testing.B) {
+	data := generateRealistic40CSV(100000, 10)
+	b.SetBytes(int64(len(data)))
+	for b.Loop() {
+		reader := csv.NewReader(bytes.NewReader(data))
+		reader.FieldsPerRecord = -1
+		_, _ = reader.ReadAll()
+	}
+}
+
+func BenchmarkReadAll_Realistic40_100K_SIMD(b *testing.B) {
+	data := generateRealistic40CSV(100000, 10)
 	b.SetBytes(int64(len(data)))
 	for b.Loop() {
 		reader := NewReader(bytes.NewReader(data))

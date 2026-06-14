@@ -203,11 +203,22 @@ func generateEscapedQuotesCSV(numRows, numCols int) []byte {
 	return buf.Bytes()
 }
 
-// generateRealisticCSV generates CSV with 4/10 quoted fields containing commas (~40%).
+// generateRealistic20CSV generates CSV with 2/10 quoted fields containing commas (~20%).
+// Row template: "Alice, Smith",30,Tokyo,engineer,100,Japan,active,42,"New York, US",2024
+// Cols 0,8 are quoted.
+func generateRealistic20CSV(numRows, _ int) []byte {
+	var buf bytes.Buffer
+	for i := 0; i < numRows; i++ {
+		buf.WriteString(`"Alice, Smith",30,Tokyo,engineer,100,Japan,active,42,"New York, US",2024`)
+		buf.WriteByte('\n')
+	}
+	return buf.Bytes()
+}
+
+// generateRealistic40CSV generates CSV with 4/10 quoted fields containing commas (~40%).
 // Row template: "Alice, Smith",30,"Tokyo, JP",engineer,100,"Japan, Asia",active,42,"New York, US",2024
-// Cols 0,2,5,8 are quoted; this exercises the prefixXOR / PCLMULQDQ hot path
-// without the all-quoted overhead.
-func generateRealisticCSV(numRows, _ int) []byte {
+// Cols 0,2,5,8 are quoted.
+func generateRealistic40CSV(numRows, _ int) []byte {
 	var buf bytes.Buffer
 	for i := 0; i < numRows; i++ {
 		buf.WriteString(`"Alice, Smith",30,"Tokyo, JP",engineer,100,"Japan, Asia",active,42,"New York, US",2024`)
