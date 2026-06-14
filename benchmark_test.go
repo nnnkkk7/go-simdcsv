@@ -119,6 +119,50 @@ func BenchmarkReadAll_Quoted_10K_SIMD(b *testing.B) {
 	}
 }
 
+func BenchmarkReadAll_Quoted_100K_Stdlib(b *testing.B) {
+	data := generateQuotedCSV(100000, 10)
+	b.SetBytes(int64(len(data)))
+	for b.Loop() {
+		reader := csv.NewReader(bytes.NewReader(data))
+		reader.FieldsPerRecord = -1
+		_, _ = reader.ReadAll()
+	}
+}
+
+func BenchmarkReadAll_Quoted_100K_SIMD(b *testing.B) {
+	data := generateQuotedCSV(100000, 10)
+	b.SetBytes(int64(len(data)))
+	for b.Loop() {
+		reader := NewReader(bytes.NewReader(data))
+		reader.FieldsPerRecord = -1
+		_, _ = reader.ReadAll()
+	}
+}
+
+// =============================================================================
+// ReadAll Benchmarks - Realistic CSV (40% quoted)
+// =============================================================================
+
+func BenchmarkReadAll_Realistic_100K_Stdlib(b *testing.B) {
+	data := generateRealisticCSV(100000, 10)
+	b.SetBytes(int64(len(data)))
+	for b.Loop() {
+		reader := csv.NewReader(bytes.NewReader(data))
+		reader.FieldsPerRecord = -1
+		_, _ = reader.ReadAll()
+	}
+}
+
+func BenchmarkReadAll_Realistic_100K_SIMD(b *testing.B) {
+	data := generateRealisticCSV(100000, 10)
+	b.SetBytes(int64(len(data)))
+	for b.Loop() {
+		reader := NewReader(bytes.NewReader(data))
+		reader.FieldsPerRecord = -1
+		_, _ = reader.ReadAll()
+	}
+}
+
 // =============================================================================
 // ReadAll Benchmarks - Mixed CSV
 // =============================================================================

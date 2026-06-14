@@ -203,6 +203,19 @@ func generateEscapedQuotesCSV(numRows, numCols int) []byte {
 	return buf.Bytes()
 }
 
+// generateRealisticCSV generates CSV with 4/10 quoted fields containing commas (~40%).
+// Row template: "Alice, Smith",30,"Tokyo, JP",engineer,100,"Japan, Asia",active,42,"New York, US",2024
+// Cols 0,2,5,8 are quoted; this exercises the prefixXOR / PCLMULQDQ hot path
+// without the all-quoted overhead.
+func generateRealisticCSV(numRows, _ int) []byte {
+	var buf bytes.Buffer
+	for i := 0; i < numRows; i++ {
+		buf.WriteString(`"Alice, Smith",30,"Tokyo, JP",engineer,100,"Japan, Asia",active,42,"New York, US",2024`)
+		buf.WriteByte('\n')
+	}
+	return buf.Bytes()
+}
+
 // =============================================================================
 // Writer Benchmark Record Generators
 // =============================================================================
@@ -259,6 +272,21 @@ func generateEscapedQuotesRecords(numRows, numCols int) [][]string {
 			record[j] = `he said "hello" to me`
 		}
 		records[i] = record
+	}
+	return records
+}
+
+// generateRealisticRecords returns records matching generateRealisticCSV.
+func generateRealisticRecords(numRows, _ int) [][]string {
+	template := []string{
+		"Alice, Smith", "30", "Tokyo, JP", "engineer",
+		"100", "Japan, Asia", "active", "42", "New York, US", "2024",
+	}
+	records := make([][]string, numRows)
+	for i := range records {
+		row := make([]string, len(template))
+		copy(row, template)
+		records[i] = row
 	}
 	return records
 }
