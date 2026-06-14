@@ -1,3 +1,3 @@
 module github.com/nnnkkk7/go-simdcsv
 
-go 1.26
+go 1.26.4
