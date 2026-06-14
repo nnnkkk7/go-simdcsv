@@ -24,11 +24,11 @@ docker-coverage:
 	docker compose run --rm coverage
 	go tool cover -html=coverage.out -o coverage.html
 
-# Download benchmark datasets
+# Prepare directory for optional benchmark datasets (not bundled in the repo)
 download-testdata:
 	@mkdir -p testdata/benchmark
-	@echo "Downloading benchmark datasets..."
-	# parking-citations, worldcitiespop, nyc-taxi-data
+	@echo "Place benchmark CSV files under testdata/benchmark/."
+	@echo "Suggested public datasets: parking-citations, worldcitiespop, nyc-taxi-data"
 
 # Clean up
 clean:

@@ -11,16 +11,6 @@
 - docs: update readme by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/80
 - Release for v0.1.0 by @github-actions[bot] in https://github.com/nnnkkk7/go-simdcsv/pull/73
 
-## [v0.1.0](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.14...v0.1.0) - 2026-02-14
-- refactor: enhance field parsing by adding quote detection and optimization flags by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/72
-- test: add benchmark tests for writer by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/74
-- refactor: optimize quote detection and writing by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/75
-- refactor: adjust SIMD thresholds and optimize quote detection in Writer by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/76
-- feat: use PCLMULQDQ by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/77
-- deps: upgrade go version to go1.26 by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/78
-- ci: add renovate by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/79
-- docs: update readme by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/80
-
 ## [v0.0.14](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.13...v0.0.14) - 2026-02-02
 - refactor: optimize chunk processing and introduce fast path for no-quote scenarios by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/65
 - docs: update readme by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/67
@@ -33,13 +23,7 @@
 - chore: update CPU feature detection to use archsimd package by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/60
 - perf: optimize SIMD mask processing with prefix XOR by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/62
 - refactor: enhance record parsing efficiency by introducing no-quote path and optimizing memory usage by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/63
-- perf: improve memory allocation and parsing efficiency  by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/64
-
-## [v0.0.12](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.11...v0.0.12) - 2026-01-27
-- docs: add performance comparison by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/54
-- docs: update readme by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/56
-- refactor: enhance error handling and improve code clarity by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/57
-- chore: remove unused code by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/58
+- perf: improve memory allocation and parsing efficiency by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/64
 
 ## [v0.0.12](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.11...v0.0.12) - 2026-01-27
 - docs: add performance comparison by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/54
@@ -55,7 +39,7 @@
 - refactor: optimize field content handling and enhance SIMD scanning performance by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/47
 - ci: fix benchmart option by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/48
 - refactor: enhance record building and parsing efficiency with CR handling by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/49
-- refactor: update SIMD scanning to utilize archsimd.Int8x64  by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/50
+- refactor: update SIMD scanning to utilize archsimd.Int8x64 by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/50
 - refactor: optimize parseResult and scanResult pooling for improved me… by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/51
 - refactor: adjust pooling capacities for parseResult and scanResult by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/52
 - refactor: improve quoted field validation by leveraging parsed metadata by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/53
@@ -81,12 +65,6 @@
 - docs: update readme by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/26
 - chore: fix formatting by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/27
 - feat: enhance CSV reader with input size limit and new field processing functions by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/28
-
-## [v0.0.6](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.5...v0.0.6) - 2026-01-25
-- feat: implement SIMD-accelerated unescaping and quote handling by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/18
-- docs: update readme by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/20
-- docs: update readme by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/21
-- docs: update readme by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/22
 
 ## [v0.0.6](https://github.com/nnnkkk7/go-simdcsv/compare/v0.0.5...v0.0.6) - 2026-01-25
 - feat: implement SIMD-accelerated unescaping and quote handling by @nnnkkk7 in https://github.com/nnnkkk7/go-simdcsv/pull/18

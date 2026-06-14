@@ -1,6 +1,6 @@
 name: AVX-512 CI
 
-# 手動実行のみ
+# Manual dispatch only
 on:
   workflow_dispatch:
     inputs:
