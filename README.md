@@ -95,7 +95,7 @@ reader := csv.NewReaderWithOptions(r, csv.ReaderOptions{
 
 ## Performance
 
-Benchmarks on AMD EPYC 9R14 with AVX-512 (Go 1.26, `GOEXPERIMENT=simd`), measured via the self-hosted AVX-512 CI runner.
+Benchmarks on AMD EPYC 9R14 with AVX-512 (Go 1.26, `GOEXPERIMENT=simd`). See [Contributing](#contributing) for the CI setup.
 
 ### ReadAll Throughput
 
@@ -138,19 +138,6 @@ The library **still works** but falls back to scalar implementation (no speedup)
 - AMD CPUs before Zen 4
 - Apple Silicon (ARM64)
 
-### CI
-
-This repository runs two GitHub Actions workflows:
-
-| Workflow | Trigger | Runner | SIMD acceleration |
-|----------|---------|--------|-------------------|
-| [`ci.yml`](.github/workflows/ci.yml) | Every pull request | GitHub-hosted `ubuntu-latest` | No (scalar fallback) |
-| [`ci-avx512.yml`](.github/workflows/ci-avx512.yml) | Manual only | Self-hosted (`avx512`) | Yes |
-
-Pull request checks use `ubuntu-latest`, which typically lacks AVX-512. Tests still pass because the library falls back to the scalar path when SIMD instructions are unavailable.
-
-AVX-512 benchmarks and SIMD validation run only on the self-hosted runner via **AVX-512 CI**. Trigger it manually from the Actions tab when you need real SIMD test and benchmark results.
-
 ## Building & Testing
 
 ```bash
@@ -172,6 +159,19 @@ GOEXPERIMENT=simd go test -bench=. -benchmem
 ## Contributing
 
 Contributions are welcome! Please open issues or pull requests on GitHub.
+
+### CI
+
+This repository runs two GitHub Actions workflows:
+
+| Workflow | Trigger | Runner | SIMD acceleration |
+|----------|---------|--------|-------------------|
+| [`ci.yml`](.github/workflows/ci.yml) | Every pull request | GitHub-hosted `ubuntu-latest` | No (scalar fallback) |
+| [`ci-avx512.yml`](.github/workflows/ci-avx512.yml) | Manual only | Self-hosted (`avx512`) | Yes |
+
+Pull request checks use `ubuntu-latest`, which typically lacks AVX-512. Tests still pass because the library falls back to the scalar path when SIMD instructions are unavailable.
+
+AVX-512 benchmarks and SIMD validation run only on the self-hosted runner via **AVX-512 CI**. Trigger it manually from the Actions tab when you need real SIMD test and benchmark results.
 
 ## License
 
